@@ -1,6 +1,6 @@
 {
   "name": "dsh-ccgui",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "在 DeepSeek Harness 里直接使用 Claude Code、Kimi、Codex、PI、OMP 等 Agent CLI",
   "icon": "./assets/logo.png",
   "license": "MIT",
