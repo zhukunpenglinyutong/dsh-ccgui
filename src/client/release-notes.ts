@@ -30,6 +30,69 @@ export interface ReleaseNote {
 /** In display order: the first page is the newest release. */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.0.6',
+    date: '2026-11-12',
+    sections: [
+      {
+        heading: '✨ 新功能',
+        items: [
+          {
+            title: 'CLI 自己的模式',
+            text: 'CLI 名字右边新增「CLI 模式」按钮，列的是该 CLI 通过 ACP 报告的模式，id 和名字原样发送，不映射成 DSH 的权限预设；进程在运行时选中当场生效，还没起来时随下一条消息发出，按钮上有标注。CLI 不接受时消息照常发出，回复会说明按哪个模式运行。',
+          },
+          {
+            title: '「EXP 自动审查」可以在 CLI 会话里用',
+            text: '审查请求转给一个独立、无状态的模型提供方，不进入 CLI 的会话历史。需要在插件配置里指定 `reviewProvider`（不能是 CLI）和可选的 `reviewModel`；插件不会替你挑选，没配置时会提示。',
+          },
+          {
+            title: '模型图标按厂商显示',
+            text: '新认 Hunyuan、智谱、MiniMax、阶跃 StepFun 和小米 MiMo；聚合 CLI 里不再让所有模型都显示 CLI 自己的 logo，认不出厂商的用中性问号占位。',
+          },
+          {
+            title: '模型倍率写在名字右边',
+            text: '模型名保持 CLI 给的原样，右侧小字显示它报的简短描述，比如 CodeBuddy 的 `x0.29 credits`；同名的免费档和付费档靠它区分，宣传语一类的长句不上屏。',
+          },
+          {
+            title: '原生会话保留自己的模型菜单',
+            text: '非 CLI 会话不再换掉 DSH 自己的模型座位，推理等级和智能体团队协作开关留在原位；插件只隐藏原生菜单里切不过去的 CLI 分组。',
+          },
+        ],
+      },
+      {
+        heading: '🐛 问题修复',
+        items: [
+          {
+            title: 'CLI 拒绝时说明原因',
+            text: '按顺序从本轮输出、回答 `_meta` 里的具名字段（如 CodeBuddy 的 `codebuddy.ai/errorMessage`）和这一轮 stderr 的最后两行里找原因；诊断 JSON、trace 头不显示，都没有时写「未说明原因」。',
+          },
+          {
+            title: '完全权限下 CLI 提问不再被静默拒绝',
+            text: '只在 CLI 提问期间把会话临时切到「询问」，问完恢复；改动不再凭空消失，屏幕上会出现审批卡片。',
+          },
+          {
+            title: '模式按钮的提示会自己消失',
+            text: 'CLI 收下模式后，按钮上的「下一条消息发送时生效」自动去掉，不用重开菜单。',
+          },
+        ],
+      },
+      {
+        heading: '📄 文档',
+        items: [
+          { text: 'README 补充 CLI 模式、自动审查配置、拒绝原因和模型图标与倍率小字的说明。' },
+          { text: '`THIRD_PARTY_NOTICES.md` 补新图标的来源，开发一节与 AGENTS.md 对齐。' },
+        ],
+      },
+      {
+        heading: '🔧 维护',
+        items: [
+          {
+            text: '新增 CLI 模式的状态、路由和界面，以及只在 CLI 提问期间生效的审批策略；e2e 改为逐帧读取会话日志。版本号升到 1.0.6。',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '1.0.5',
     date: '2026-11-09',
     sections: [
