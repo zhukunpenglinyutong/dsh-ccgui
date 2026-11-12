@@ -13,6 +13,9 @@ function setup(ptcWrapFor: (provider: string, sessionId: string) => PtcWrap | un
   const stream = vi.fn(async function* (): AsyncGenerator<StreamChunk> {
     yield FINISH
   })
+  const auxiliaryStream = vi.fn(async function* (): AsyncGenerator<StreamChunk> {
+    yield FINISH
+  })
   const resolveSession = vi.fn((_provider: string, _sessionId: string) => ({ stream }) as unknown as CliSession)
   const adapter = new CliBridgeAdapter({
     labelFor: (provider) => (provider === 'cli-x' ? 'X CLI' : undefined),
@@ -25,11 +28,15 @@ function setup(ptcWrapFor: (provider: string, sessionId: string) => PtcWrap | un
     ],
     modelName: (_provider, model) => (model === 'large' ? 'Large' : model),
     reasoningFor: (_provider, model) => (model === 'large' ? LEVELS : undefined),
+    auxiliaryStream,
   })
-  return { adapter, stream, resolveSession }
+  return { adapter, stream, resolveSession, auxiliaryStream }
 }
 
-const request = (fields: Partial<GenerateOptions> = {}): GenerateOptions =>
+/** This SDK types `purpose` as always undefined; newer hosts do send it. */
+type RequestFields = Omit<Partial<GenerateOptions>, 'purpose'> & { purpose?: string }
+
+const request = (fields: RequestFields = {}): GenerateOptions =>
   ({
     provider: 'cli-x',
     model: DEFAULT_MODEL_ID,
@@ -127,8 +134,22 @@ describe('CliBridgeAdapter.stream', () => {
   // would inject it into the user's real conversation.
   it('refuses auxiliary requests', async () => {
     const { adapter, resolveSession } = setup()
-    const options = request({ purpose: 'compaction' } as unknown as Partial<GenerateOptions>)
-    await expect(collect(adapter.stream(options))).rejects.toMatchObject({ code: 'UNSUPPORTED_OPTION' })
+    const options = request({ purpose: 'compaction' })
+    await expect(collect(adapter.stream(options))).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPTION',
+      message: 'CLI 会话不支持辅助模型请求（compaction）。',
+    })
+    expect(resolveSession).not.toHaveBeenCalled()
+  })
+
+  // Auto review sends its reviewer request on the main agent's route. Send it to
+  // a stateless model instead: forwarding it to the CLI would turn the review
+  // history into a real user prompt.
+  it('routes the Auto reviewer to a stateless model instead of the CLI', async () => {
+    const { adapter, resolveSession, auxiliaryStream } = setup()
+    const options = request({ purpose: 'auto-review', system: 'REVIEW_POLICY' })
+    await expect(collect(adapter.stream(options))).resolves.toEqual([FINISH])
+    expect(auxiliaryStream).toHaveBeenCalledWith(options)
     expect(resolveSession).not.toHaveBeenCalled()
   })
 })

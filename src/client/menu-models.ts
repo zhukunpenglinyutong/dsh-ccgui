@@ -1,9 +1,12 @@
 /**
- * What the composer's model control lists for a session. On a CLI that is the CLI's own
- * models. On anything else it is every provider the harness runs itself, with the CLIs left
- * out: a CLI cannot pick up a conversation it took no part in, which is also why the switcher
- * locks once a session has started. The harness's own seat lists every provider in its one
- * global catalog and offers no way to narrow it per session, so this control replaces it.
+ * What the composer's model control lists on a CLI session: that CLI's own models. The
+ * harness-provider branch is still derived here, so callers such as the mode seat can resolve
+ * the current selection, but a session the harness runs no longer renders this menu: it keeps
+ * its native model seat, which also carries settings such as the agent-team toggle. The
+ * harness's own seat lists every provider in its one global catalog and offers no way to
+ * narrow it per session, which is why a CLI session needs a control of its own. On a harness
+ * session a style rule hides just that catalog's CLI groups (see model-menu-styles.ts), so
+ * the native seat keeps its own providers and settings without offering a move it cannot make.
  * @module dsh-ccgui/client/menu-models
  */
 
@@ -30,6 +33,8 @@ export interface MenuRow {
   readonly provider: string
   readonly model: string
   readonly name: string
+  /** Compact label shown beside the name, e.g. a CLI's usage cost multiplier; prose is left out. */
+  readonly description?: string
   readonly reasoning?: DirectoryReasoning
 }
 
@@ -91,10 +96,11 @@ function toSection({ id, name, models }: DirectoryGroup, headed: boolean): MenuS
     id,
     name: id === ACCOUNT_PROVIDER_ID ? ACCOUNT_PROVIDER_NAME : name,
     headed,
-    rows: models.map(({ id: model, name: modelName, reasoning }) => ({
+    rows: models.map(({ id: model, name: modelName, description, reasoning }) => ({
       provider: id,
       model,
       name: modelName,
+      ...(description === undefined ? {} : { description }),
       ...(reasoning === undefined ? {} : { reasoning }),
     })),
   }

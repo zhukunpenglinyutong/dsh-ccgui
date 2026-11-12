@@ -35,11 +35,12 @@ export class ModelState {
 
   /**
    * @param knownModels - what the CLI reported ahead of any session.
-   * @param onOptions - told every set of options the CLI reports, which carry more than the model.
+   * @param onOptions - told every set of options the CLI reports, which carry more than the
+   *   model, and whether they describe a session the CLI has just created.
    */
   constructor(
     private readonly knownModels?: () => CliModelList | undefined,
-    private readonly onOptions?: (options: ConfigOptions) => void,
+    private readonly onOptions?: (options: ConfigOptions, isNewSession: boolean) => void,
   ) {}
 
   /**
@@ -51,13 +52,13 @@ export class ModelState {
     this.optionId = list?.configId
     this.active = list?.current
     if (isNewSession) this.cliDefault = list?.current
-    this.onOptions?.(options)
+    this.onOptions?.(options, isNewSession)
   }
 
   /** The CLI reported a change of its own. */
   observe(options: ConfigOptions): void {
     this.active = readModelList(options)?.current ?? this.active
-    this.onOptions?.(options)
+    this.onOptions?.(options, false)
   }
 
   /**
@@ -77,7 +78,7 @@ export class ModelState {
     try {
       const options = await abortable(where.transport.setConfigOption(where.acpSessionId, optionId, target), signal)
       // A new model can bring other reasoning levels, reported in the same answer.
-      this.onOptions?.(options)
+      this.onOptions?.(options, false)
       const confirmed = readModelList(options)?.current
       if (confirmed !== undefined && confirmed !== target) throw new Error(`CLI 仍在使用 ${confirmed}`)
       this.active = target

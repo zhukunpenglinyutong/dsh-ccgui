@@ -12,6 +12,7 @@ const {
   until,
   newSession,
   newCliSession,
+  chooseCli,
   cliSwitcher,
   modelTrigger,
   modelNames,
@@ -31,6 +32,36 @@ const harnessSeatDisplays = () =>
   page
     .locator('[data-slot="conversation.input.model"]')
     .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).display))
+// The composer's own control for the CLI's native modes, beside the model and its level.
+const modeTrigger = () => page.getByRole('button', { name: /^CLI 模式，当前/ })
+
+/** Switch the harness's access mode, confirming 完全权限's own risk dialog. */
+async function setAccessMode(name) {
+  await page
+    .getByRole('button', { name: /^访问模式/ })
+    .last()
+    .click()
+  await sleep(400)
+  await page.getByRole('menuitemradio', { name }).or(page.getByRole('menuitem', { name })).first().click()
+  await sleep(600)
+  const confirm = page.getByRole('button', { name: /启用完全权限|确定|确认/ }).first()
+  if (await confirm.isVisible().catch(() => false)) {
+    const box = page.getByRole('checkbox').first()
+    if (await box.isVisible().catch(() => false)) await box.click()
+    await confirm.click()
+    await sleep(600)
+  }
+  await until(
+    async () =>
+      (
+        await page
+          .getByRole('button', { name: /^访问模式/ })
+          .last()
+          .innerText()
+      ).includes(name),
+    `access mode ${name}`,
+  )
+}
 
 // Must stay first, on a fresh server: for `npx` commands, starting a CLI downloads and runs
 // a package, which nobody should get just by opening the app.
@@ -48,24 +79,64 @@ await scenario('lazy: opening the app starts no CLI', async () => {
   if (running !== '') throw new Error(`already running: ${running}`)
 })
 
-// Also needs the fresh server, while the session is not on a CLI yet. The harness's seat
-// would list every CLI here too, which a started session cannot move to.
-await scenario("seat: a session not on a CLI lists the harness's providers, not the CLIs", async () => {
-  if ((await page.locator('.dsh-cli-model').count()) !== 1) throw new Error("the plugin's control is missing")
+// The harness's own model seat carries settings such as the agent-team toggle, so a session
+// it runs keeps that seat and its native menu. Only a CLI session replaces it.
+await scenario('seat: a harness session keeps its native model control', async () => {
+  if ((await page.locator('.dsh-cli-model').count()) !== 0) throw new Error("the plugin's control replaced the seat")
   const seats = await harnessSeatDisplays()
-  if (!seats.every((display) => display === 'none')) throw new Error(`harness seat: ${seats.join()}`)
-  await modelTrigger().click()
-  await sleep(500)
-  // This home signs in to no provider, so the harness may have nothing of its own to list.
-  const headings = await page.locator('.dsh-cli-model-heading').allInnerTexts()
-  const rows = await page
-    .getByRole('menuitemradio')
-    .evaluateAll((items) => items.map((item) => item.getAttribute('title')))
-  await shot('model-menu-harness')
+  if (seats.length === 0 || seats.some((display) => display === 'none'))
+    throw new Error(`harness seat hidden or missing: ${seats.join()}`)
+  await shot('native-model-seat')
+  // The native seat reads one global catalog, so it also lists CLIs a session it runs cannot
+  // move to. Only those groups may be hidden; its own providers and settings stay put.
+  await page.locator('[data-slot="conversation.input.model"] button').first().click()
+  await sleep(400)
+  const visibleCliGroups = await page
+    .locator('section[data-menu-group]:has([data-provider-id^="cli-"])')
+    .evaluateAll((nodes) => nodes.filter((node) => getComputedStyle(node).display !== 'none').length)
+  if (visibleCliGroups !== 0) throw new Error(`${visibleCliGroups} CLI groups still listed in the native menu`)
+  // This home signs in to no provider, so plant one to prove the filter stops at the CLIs.
+  await page.evaluate(() => {
+    const menu = document.querySelector('[role="menu"][aria-label="模型"]')
+    const section = document.createElement('section')
+    section.id = 'harness-provider-probe'
+    section.setAttribute('data-menu-group', '')
+    section.innerHTML =
+      '<button type="button" role="menuitemradio"><span data-provider-id="deepseek-account">DeepSeek-V4.1-Flash</span></button>'
+    menu?.append(section)
+  })
+  const probeDisplay = await page.locator('#harness-provider-probe').evaluate((node) => getComputedStyle(node).display)
+  if (probeDisplay === 'none') throw new Error('a harness provider was hidden along with the CLIs')
+  await shot('native-model-seat-filtered')
   await page.keyboard.press('Escape')
   await sleep(250)
-  if (headings.includes(FAKE) || rows.some((name) => name?.startsWith('Fake')))
-    throw new Error(`lists a CLI: ${headings.join()} / ${rows.join()}`)
+  // This session is the harness's own, so the access control keeps the composer's seat
+  // and the CLI's mode control stays out of it.
+  if ((await page.getByRole('button', { name: /^访问模式/ }).count()) === 0) throw new Error('no access control')
+  if ((await page.locator('.dsh-cli-mode-seat').count()) !== 0)
+    throw new Error('a CLI mode control on a harness session')
+})
+
+// The access mode is DSH's stance for sessions it runs. A CLI decides for itself whether to
+// ask, so even 完全权限 must not answer its question with a silent refusal. This runs on the
+// harness session the previous scenario left open: the preset belongs to it, so it cannot
+// follow the suite into later scenarios.
+await scenario('approvals: a 完全权限 session still lets the CLI ask', async () => {
+  await setAccessMode('完全权限')
+  await chooseCli(FAKE)
+  await send('WRITE full.txt')
+  await untilText('等待审批')
+  if (existsSync(inWorkspace('full.txt'))) throw new Error('written before anyone answered')
+  await page.getByRole('button', { name: '允许一次' }).click()
+  await untilText('done')
+  await idle('WRITE full.txt')
+  if (!existsSync(inWorkspace('full.txt'))) throw new Error('missing after approval')
+  // The stance is the user's setting: lifted only while the CLI asked, then put back.
+  const policies = sessionEvents('WRITE full.txt')
+    .filter((event) => event.type === 'approval/policy')
+    .map((event) => event.data.policy)
+  if (policies.slice(-2).join() !== 'ask,never') throw new Error(`access mode not restored: ${policies.join()}`)
+  await shot('full-access-asked')
 })
 
 await scenario('allow: permission gates the write, then the file appears', async () => {
@@ -164,19 +235,19 @@ await scenario('setup: leave a session whose last turn failed', async () => {
   await idle(FAILED_PROMPT)
 })
 
-await scenario('position: the switcher sits between the + button and the permission control', async () => {
+// The CLI's mode belongs to that CLI, so it reads next to the switcher — and the harness's
+// access control, which would answer for a session the harness runs, steps out of the row.
+await scenario('position: the mode sits between the + button, the CLI and the model', async () => {
   await newCliSession(FAKE)
   const left = (await page.getByRole('button', { name: '添加文件或调用指令' }).last().boundingBox())?.x
   const switcher = await cliSwitcher().boundingBox()
-  const permission = (
-    await page
-      .getByRole('button', { name: /^访问模式/ })
-      .last()
-      .boundingBox()
-  )?.x
+  const mode = await page.locator('.dsh-cli-mode-seat').boundingBox()
+  const model = await modelTrigger().boundingBox()
   await shot('switcher')
-  if (!(left < switcher.x && switcher.x < permission))
-    throw new Error(`order: + ${left}, switcher ${switcher.x}, permission ${permission}`)
+  if (!(left < switcher.x && switcher.x < mode.x && mode.x < model.x))
+    throw new Error(`order: + ${left}, switcher ${switcher.x}, mode ${mode.x}, model ${model.x}`)
+  const access = await page.getByRole('button', { name: /^访问模式/ }).count()
+  if (access !== 0) throw new Error('the access control is still in the row')
 })
 
 // The default row stands for Fake Small, so Fake Small gets no second row of its own.
@@ -207,6 +278,18 @@ await scenario("flat menu: one click shows only this CLI's models, with no secon
   if ((await modelTrigger().getAttribute('aria-expanded')) === 'true') throw new Error('Escape left the menu open')
 })
 
+// A CLI's own logo names the CLI, not the maker of every model it happens to list.
+await scenario('model marks: an unidentifiable model gets a neutral mark, never a brand', async () => {
+  await modelTrigger().click()
+  await sleep(300)
+  const marks = await page
+    .getByRole('menuitemradio')
+    .evaluateAll((rows) => rows.map((row) => row.querySelector('[data-cli-mark]')?.getAttribute('data-cli-mark')))
+  if (marks.join() !== 'unknown,unknown') throw new Error(`model marks: ${marks.join()}`)
+  await page.keyboard.press('Escape')
+  await sleep(250)
+})
+
 await scenario("flat menu: the harness's control is out of the row", async () => {
   const seats = await harnessSeatDisplays()
   if (!seats.every((display) => display === 'none')) throw new Error(`harness seat: ${seats.join()}`)
@@ -220,7 +303,8 @@ await scenario('flat menu: arrows move, Enter settles, and the trigger takes the
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Enter')
   await until(async () => (await modelTrigger().getAttribute('title')) === 'Fake Large', 'trigger naming Fake Large')
-  if ((await modelTrigger().getAttribute('aria-expanded')) === 'true') throw new Error('selection left the menu open')
+  // The row settles first and the menu closes on the next tick, so wait for both.
+  await until(async () => (await modelTrigger().getAttribute('aria-expanded')) !== 'true', 'the menu to close')
   await chooseModel(FAKE, 'Fake Small（默认）')
 })
 
@@ -268,19 +352,85 @@ await scenario('model switch mid-session: the next message runs on the new model
   await untilText('model=fake-small')
 })
 
+// A refusal has no field of its own in ACP. A CLI that explains itself nowhere in the
+// stream must still not leave the user with "未说明原因" when the reason is right there.
+await scenario('refusal: CodeBuddy’s attached request error reaches the failure', async () => {
+  await newCliSession(FAKE)
+  await send('REFUSE META')
+  await untilText('可消耗积分继续使用该模型')
+  await idle('REFUSE META')
+  const body = await bodyText()
+  if (!body.includes('拒绝继续这个请求')) throw new Error('not reported as a refusal')
+  if (body.includes('-32003') || body.includes('requestId')) throw new Error('bookkeeping ids leaked on screen')
+})
+
+await scenario('refusal: the log is quoted when the CLI attached nothing', async () => {
+  await send('REFUSE')
+  await untilText('quota exceeded for hy4-free')
+  await idle('REFUSE', 2)
+})
+
+// A wall of _meta JSON is worse than the plain failure. When neither the answer
+// nor the log has a human sentence, the user must see "未说明原因" again.
+await scenario('refusal: a telemetry dump falls back to the plain failure', async () => {
+  await send('REFUSE NOISE')
+  await untilText('未说明原因')
+  await idle('REFUSE NOISE')
+  const body = await bodyText()
+  if (body.includes('traceparent') || body.includes('FAILED_MODEL_REQUEST')) {
+    throw new Error('diagnostic dump leaked onto the screen')
+  }
+})
+
 await scenario('locked: a started session keeps its CLI, and says how to change', async () => {
   if (!(await cliSwitcher().isDisabled())) throw new Error('switcher still enabled after the session started')
   const title = await cliSwitcher().getAttribute('title')
   if (!title.includes('新建会话')) throw new Error(`hint: ${title}`)
 })
 
-await scenario('PTC: a CLI refuses clearly in the mode it cannot run in', async () => {
+// The CLI's modes are its own: the control shows the names it reported and sends the id back.
+await scenario('mode: the CLI lists its own modes, and a pick made before it runs waits', async () => {
+  await newCliSession(FAKE)
+  await until(async () => (await modeTrigger().count()) > 0, 'the CLI mode control', 30_000)
+  const label = await modeTrigger().getAttribute('aria-label')
+  if (label !== 'CLI 模式，当前 Default') throw new Error(`label: ${label}`)
+  await modeTrigger().click()
+  await sleep(300)
+  const rows = await page.getByRole('menuitem').evaluateAll((nodes) => nodes.map((node) => node.textContent))
+  if (rows.join() !== 'Default,Plan') throw new Error(`rows: ${rows.join()}`)
+  await page.getByRole('menuitem', { name: 'Plan', exact: true }).click()
+  await sleep(300)
+  // Nothing to change before the CLI session exists, so the pick says when it will apply.
+  const pending = await modeTrigger().getAttribute('title')
+  if (pending === null || !pending.includes('下一条消息发送时生效')) throw new Error(`pending hint: ${pending}`)
+  await send('WHICH MODE')
+  await untilText('mode=plan')
+  await idle('WHICH MODE')
+  await until(async () => {
+    const title = await modeTrigger().getAttribute('title')
+    return title !== null && !title.includes('下一条消息发送时生效')
+  }, 'the pick to be confirmed')
+})
+
+await scenario('mode switch mid-session: the live CLI changes before the next prompt', async () => {
+  await modeTrigger().click()
+  await sleep(300)
+  await page.getByRole('menuitem', { name: 'Default', exact: true }).click()
+  await sleep(500)
+  const title = await modeTrigger().getAttribute('title')
+  if (title === null || title.includes('下一条消息发送时生效')) throw new Error('a running CLI should apply at once')
+  await send('WHICH MODE')
+  await untilText('mode=default')
+})
+
+// A PTC session runs the CLI through run_code; nothing refuses a CLI outright any more.
+await scenario('PTC: a CLI turn runs in a PTC session', async () => {
   await newSession('PTC')
   await chooseModel(FAKE, 'Fake Small（默认）')
-  await send('ptc refused')
-  await untilText('CLI_WRONG_PRESET')
-  if (!(await bodyText()).includes('标准模式')) throw new Error('message does not name the way out')
-  await shot('ptc-refused')
+  await send('ptc echo')
+  await untilText('echo: ptc echo')
+  await idle('ptc echo')
+  await shot('ptc-session')
 })
 
 await scenario('marks: the switcher, its menu and the session list say which CLI is which', async () => {

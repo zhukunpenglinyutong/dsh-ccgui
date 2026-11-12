@@ -12,7 +12,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { DirectorySelection, DirectoryState } from '../../src/client/choices.ts'
 import { CliModelMenu } from '../../src/client/model-menu.tsx'
 import type { ModelMenuInjected } from '../../src/client/model-menu.tsx'
-import { MENU_CLASS, ROW_ACTIVE_CLASS, ROW_MARK_CLASS } from '../../src/client/model-menu-styles.ts'
+import {
+  MENU_CLASS,
+  ROW_ACTIVE_CLASS,
+  ROW_DESCRIPTION_CLASS,
+  ROW_MARK_CLASS,
+} from '../../src/client/model-menu-styles.ts'
 import { createStore } from '../fixtures/client-store.ts'
 import type { TestStore } from '../fixtures/client-store.ts'
 
@@ -31,13 +36,18 @@ const MANY_MODELS = [
 
 type SelectResult = Awaited<ReturnType<ModelMenuInjected['select']>>
 
-function directoryState(models = FEW_MODELS, current = 'default', pending?: DirectorySelection): DirectoryState {
+function directoryState(
+  models = FEW_MODELS,
+  current = 'default',
+  pending?: DirectorySelection,
+  provider = PROVIDER,
+): DirectoryState {
   return {
     groups: [
-      { id: PROVIDER, name: 'Fake CLI', models },
+      { id: provider, name: 'Fake CLI', models },
       { id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }] },
     ],
-    current: { provider: PROVIDER, model: current },
+    current: { provider, model: current },
     pending: pending ?? null,
   }
 }
@@ -104,6 +114,20 @@ describe('CliModelMenu rendering', () => {
     expect(container.innerHTML).toBe('')
   })
 
+  // The harness's own model seat carries settings such as the agent-team toggle, so a
+  // session it runs keeps that seat instead of this control.
+  it('renders nothing on a session the harness runs', () => {
+    const state: DirectoryState = {
+      groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: FEW_MODELS }],
+      current: { provider: 'deepseek-official', model: 'fake-small' },
+      pending: null,
+    }
+    const { container } = render(
+      <CliModelMenu available directory={createStore(state)} load={vi.fn()} select={vi.fn()} session={undefined} />,
+    )
+    expect(container.innerHTML).toBe('')
+  })
+
   it('names the current model on the trigger', () => {
     setup()
     expect(trigger().getAttribute('title')).toBe('Fake Small（默认）')
@@ -138,6 +162,50 @@ describe('CliModelMenu opening and closing', () => {
     const { user } = setup(directoryState(FEW_MODELS, 'fake-small'))
     await user.click(trigger())
     expect(rows().map((row) => row.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false'])
+  })
+
+  // Names stay as the CLI gave them; the cost multiplier is small print on the right.
+  it('shows a CLI cost multiplier beside a clean model name', async () => {
+    const priced = [
+      { id: 'default', name: 'Hy4（默认）' },
+      { id: 'hy4free', name: 'Hy4', description: 'x0.00 credits' },
+      { id: 'hy4std', name: 'Hy4', description: 'x0.29 credits' },
+    ]
+    const { user } = setup(directoryState(priced, 'hy4std'))
+    await user.click(trigger())
+    expect(rowNames()).toEqual(['Hy4（默认）', 'Hy4', 'Hy4'])
+    expect(trigger().getAttribute('title')).toBe('Hy4')
+    const small = rows().map((row) => row.querySelector(`.${ROW_DESCRIPTION_CLASS}`))
+    expect(small.map((node) => node?.textContent ?? null)).toEqual([null, 'x0.00 credits', 'x0.29 credits'])
+    expect(small[1]?.getAttribute('title')).toBe('x0.00 credits')
+    // The small print joins the row's accessible name, so e2e picks rows by their title,
+    // which stays the model name alone. Keep that selector usable.
+    expect(document.querySelectorAll('[role="menuitemradio"][title="Hy4"]')).toHaveLength(2)
+  })
+
+  it('leaves no small print on a model without a description', async () => {
+    const { user } = setup()
+    await user.click(trigger())
+    expect(document.querySelectorAll(`.${ROW_DESCRIPTION_CLASS}`)).toHaveLength(0)
+  })
+
+  // Providers also send sentences selling a model's strengths. Truncating one into a row
+  // leaves an unreadable fragment beside the name, so the menu leaves prose out entirely.
+  it.each([
+    'Stronger agentic coding, knowledge work and long-horizon tasks',
+    'Built for the most demanding agentic workflows',
+    'Fastest for quick answers',
+    '',
+  ])('leaves a prose description off the row: %j', async (description) => {
+    const described = [
+      { id: 'flash', name: 'DeepSeek-V4.1-Flash' },
+      { id: 'pro', name: 'DeepSeek-V4-Pro', description },
+    ]
+    const { user } = setup(directoryState(described, 'flash'))
+    await user.click(trigger())
+    expect(rowNames()).toEqual(['DeepSeek-V4.1-Flash', 'DeepSeek-V4-Pro'])
+    expect(document.querySelectorAll(`.${ROW_DESCRIPTION_CLASS}`)).toHaveLength(0)
+    if (description !== '') expect(screen.queryByText(description)).toBeNull()
   })
 
   it('closes when the trigger is pressed again, keeping focus on it', async () => {
@@ -225,7 +293,7 @@ describe('CliModelMenu keyboard', () => {
 })
 
 describe('CliModelMenu search', () => {
-  it("puts each model's vendor mark beside it, keeping a blank slot where none is known", async () => {
+  it("puts each model's maker beside it and a neutral mark where the maker is unknown", async () => {
     const models = [
       { id: 'deepseek-v4', name: 'DeepSeek V4' },
       { id: 'k3', name: 'K3' },
@@ -234,8 +302,26 @@ describe('CliModelMenu search', () => {
     const { user } = setup(directoryState(models, 'k3'))
     await user.click(trigger())
     const marks = rows().map((row) => row.querySelector('[data-cli-mark]')?.getAttribute('data-cli-mark'))
-    expect(marks).toEqual(['deepseek', 'kimi', undefined])
+    expect(marks).toEqual(['deepseek', 'kimi', 'unknown'])
     expect(rows().every((row) => row.querySelector(`.${ROW_MARK_CLASS}`) !== null)).toBe(true)
+  })
+
+  // The real CodeBuddy list mixes five vendors and one anonymous model. Its own purple
+  // logo must not appear on any row: the logo names the CLI, not the model's maker.
+  it('gives every model in an aggregator list its own maker', async () => {
+    const models = [
+      { id: 'hy4free', name: 'Hy4' },
+      { id: 'glm-5.3', name: 'GLM-5.3' },
+      { id: 'space-bunny', name: 'Space-Bunny' },
+      { id: 'minimax-m3.1-flash', name: 'MiniMax-M3.1-Flash' },
+      { id: 'step-5-preview', name: 'Step-5-Preview' },
+      { id: 'mimo-v2.6-pro', name: 'Xiaomi MiMo-V2.6-Pro' },
+    ]
+    const { user } = setup(directoryState(models, 'hy4free', undefined, 'cli-codebuddy'))
+    await user.click(trigger())
+    const marks = rows().map((row) => row.querySelector('[data-cli-mark]')?.getAttribute('data-cli-mark'))
+    expect(marks).toEqual(['hunyuan', 'zhipu', 'unknown', 'minimax', 'stepfun', 'xiaomi'])
+    expect(marks).not.toContain('codebuddy')
   })
 
   it('offers no search for a short list', async () => {

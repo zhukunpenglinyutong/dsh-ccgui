@@ -29,6 +29,9 @@ const CONTEXT_WINDOW = 1_000_000_000
 /** A retry would repeat a prompt the CLI may already have acted on. */
 const NO_RETRY: ResolvedRetryPolicy = resolveRetryPolicy({ mode: 'normal', maxRetries: 0 }, 'dsh-ccgui')
 
+/** The experimental Auto preset's reviewer, served by an independent stateless route. */
+const AUTO_REVIEW_PURPOSE = 'auto-review'
+
 /** What the adapter needs from the bridge. */
 export interface AdapterDeps {
   /** Display name for a provider route, or undefined when it is not a known CLI. */
@@ -45,6 +48,11 @@ export interface AdapterDeps {
   modelName(provider: string, model: string): string
   /** The reasoning levels of one model, if it offers any. */
   reasoningFor(provider: string, model: string): LlmModelReasoningInfo | undefined
+  /**
+   * Serve one auto-review request on a stateless route instead of this CLI
+   * conversation. Throws when no such route is available.
+   */
+  auxiliaryStream(options: GenerateOptions): AsyncIterable<StreamChunk>
 }
 
 /** Routes harness model requests to CLI sessions. */
@@ -78,17 +86,22 @@ export class CliBridgeAdapter extends LlmAdapter {
   }
 
   /**
-   * Run one harness step on the session's CLI. Auxiliary requests such as summaries
-   * expect a stateless model; sending one here would inject it into the user's
-   * real conversation, so they are refused.
+   * Run one harness step on the session's CLI. Auxiliary requests expect a
+   * stateless model, so the Auto reviewer is handed to a separate route; every
+   * other purpose is still refused, since forwarding it here would inject it
+   * into the user's real conversation.
    * @param options - the assembled request; only messages, session, model, reasoning level and signal apply.
-   * @yields stream chunks from the CLI session.
+   * @yields stream chunks from the CLI session or the reviewer route.
    */
   override async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     const { provider, model, reasoningEffort, sessionId, messages, signal, purpose } = options
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- not in the current type, but other host versions may still send it
     if (purpose !== undefined) {
-      throw new LlmError(`CLI 会话不支持辅助模型请求（${String(purpose)}）。`, 'UNSUPPORTED_OPTION')
+      if (String(purpose) !== AUTO_REVIEW_PURPOSE) {
+        throw new LlmError(`CLI 会话不支持辅助模型请求（${String(purpose)}）。`, 'UNSUPPORTED_OPTION')
+      }
+      yield* this.deps.auxiliaryStream(options)
+      return
     }
     if (sessionId === undefined) {
       throw new LlmError('CLI 只能在会话里使用，不支持一次性模型请求。', 'UNSUPPORTED_OPTION')

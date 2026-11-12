@@ -91,6 +91,50 @@ describe('CliModelCatalog', () => {
     expect(catalog.modelName('cli-x', 'claude-opus-5')).toBe('Opus 5')
   })
 
+  // CodeBuddy reports the usage cost multiplier as each option's description. The menu
+  // shows it as small print beside the name, so the catalog keeps the two fields apart.
+  it('keeps names clean and exposes the cost multiplier as a description', async () => {
+    const priced: CliModelList = {
+      configId: 'model',
+      current: 'hy4std',
+      options: [
+        { value: 'hy4free', name: 'Hy4', description: 'x0.00 credits' },
+        { value: 'hy4std', name: 'Hy4', description: 'x0.29 credits' },
+        { value: 'glm', name: 'GLM', description: 'x0.69 credits' },
+      ],
+    }
+    const { catalog } = setup(() => Promise.resolve(priced))
+    catalog.ensureListed('cli-x')
+    await settled()
+    expect(catalog.listModels('cli-x')).toEqual([
+      { provider: 'cli-x', id: 'default', name: 'Hy4（默认）' },
+      { provider: 'cli-x', id: 'hy4free', name: 'Hy4', description: 'x0.00 credits' },
+      { provider: 'cli-x', id: 'hy4std', name: 'Hy4', description: 'x0.29 credits' },
+      { provider: 'cli-x', id: 'glm', name: 'GLM', description: 'x0.69 credits' },
+    ])
+    expect(catalog.modelName('cli-x', 'glm')).toBe('GLM')
+    expect(catalog.modelName('cli-x', 'default')).toBe('Hy4（默认）')
+  })
+
+  // Only distinct descriptions make a tier. Without them the row is still the alias
+  // the upstream filter hides, so that de-duplication must not be loosened.
+  it('still hides a same-name alias when descriptions do not tell the rows apart', async () => {
+    const { catalog } = setup(() =>
+      Promise.resolve({
+        configId: 'model',
+        current: 'default',
+        options: [
+          { value: 'default', name: 'Opus 5.5', description: 'x1.00 credits' },
+          { value: 'opus', name: 'Opus 5.5', description: 'x1.00 credits' },
+          { value: 'sonnet', name: 'Sonnet 5.5' },
+        ],
+      }),
+    )
+    catalog.ensureListed('cli-x')
+    await settled()
+    expect(catalog.listModels('cli-x').map((model) => model.id)).toEqual(['default', 'sonnet'])
+  })
+
   it('tells the UI when the list arrives', async () => {
     const { catalog, deps } = setup()
     catalog.ensureListed('cli-x')
@@ -365,5 +409,61 @@ describe('CliModelCatalog', () => {
       await settled()
       expect(catalog.known('cli-x')?.efforts).toEqual({ small: null, large: THINKING })
     })
+  })
+})
+
+// Each CLI has its own set of native modes; one route's report must never become
+// another's, and the ids stay exactly as the CLI wrote them.
+describe('native CLI modes', () => {
+  const MODES_X = {
+    configId: 'permission_mode',
+    current: 'acceptEdits',
+    options: [{ value: 'acceptEdits', name: 'Accept edits' }],
+  }
+  const MODES_Y = {
+    configId: 'access',
+    current: 'ask',
+    options: [{ value: 'ask', name: 'Ask' }],
+  }
+  const withModes = (provider: string): Promise<CliModelList> =>
+    Promise.resolve({ ...LIST, modes: provider === 'cli-x' ? MODES_X : MODES_Y })
+
+  it('keeps each CLI modes under its own route', async () => {
+    const { catalog } = setup(withModes)
+    catalog.ensureListed('cli-x')
+    catalog.ensureListed('cli-y')
+    await settled()
+    expect(catalog.modesFor('cli-x')).toEqual(MODES_X)
+    expect(catalog.modesFor('cli-y')).toEqual(MODES_Y)
+    expect(catalog.modesFor('cli-z')).toBeUndefined()
+  })
+
+  it('learns a reported mode change for one route only', async () => {
+    const { catalog, deps } = setup(withModes)
+    catalog.ensureListed('cli-x')
+    catalog.ensureListed('cli-y')
+    await settled()
+    deps.onUpdated.mockClear()
+    const changed = { ...MODES_X, current: 'plan' }
+    catalog.learnModes('cli-x', changed)
+    expect(catalog.modesFor('cli-x')).toEqual(changed)
+    expect(catalog.modesFor('cli-y')).toEqual(MODES_Y)
+    expect(deps.onUpdated).toHaveBeenCalledWith('cli-x')
+  })
+
+  it('does not refresh the menu for an unchanged report', async () => {
+    const { catalog, deps } = setup(withModes)
+    catalog.ensureListed('cli-x')
+    await settled()
+    deps.onUpdated.mockClear()
+    catalog.learnModes('cli-x', MODES_X)
+    expect(deps.onUpdated).not.toHaveBeenCalled()
+  })
+
+  it('ignores a report from a CLI that has not answered yet', () => {
+    const { catalog, deps } = setup(withModes)
+    catalog.learnModes('cli-x', MODES_X)
+    expect(catalog.modesFor('cli-x')).toBeUndefined()
+    expect(deps.save).not.toHaveBeenCalled()
   })
 })

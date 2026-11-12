@@ -5,8 +5,27 @@
 
 import { CLI_ROUTE_PREFIX, cliRoute } from '../constants.ts'
 
-/** A mark the client can draw; `cli` is the generic one for a CLI without its own. */
-export type ProviderMarkId = 'opencode' | 'omp' | 'codex' | 'pi' | 'claude' | 'codebuddy' | 'kimi' | 'deepseek' | 'cli'
+/**
+ * A mark the client can draw. Some name a CLI, some name a model vendor. A model whose maker
+ * cannot be read falls back to a neutral mark (`unknown`), and `cli` is the generic CLI
+ * one for a CLI with no mark of its own.
+ */
+export type ProviderMarkId =
+  | 'opencode'
+  | 'omp'
+  | 'codex'
+  | 'pi'
+  | 'claude'
+  | 'codebuddy'
+  | 'kimi'
+  | 'deepseek'
+  | 'hunyuan'
+  | 'zhipu'
+  | 'minimax'
+  | 'stepfun'
+  | 'xiaomi'
+  | 'unknown'
+  | 'cli'
 
 /** The fields of a session-list row this plugin reads. */
 export interface SessionRowValues {

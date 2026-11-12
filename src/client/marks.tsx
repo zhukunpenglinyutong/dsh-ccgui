@@ -1,7 +1,7 @@
 /**
- * The marks that tell providers apart in the composer and the session list. Inline so
- * each follows the theme through `currentColor`; DeepSeek, Claude, OMP and CodeBuddy carry their own.
- * Origins are in THIRD_PARTY_NOTICES.md.
+ * The marks that tell providers apart in the composer and the session list, plus the model
+ * vendors a CLI may list. Inline so each follows the theme through `currentColor`; the
+ * coloured ones carry their own brand. Origins are in THIRD_PARTY_NOTICES.md.
  * @module dsh-ccgui/client/marks
  */
 
@@ -9,6 +9,47 @@ import { useId } from 'react'
 import type { ReactElement } from 'react'
 import { markOf } from './provider-marks.ts'
 import type { ProviderMarkId } from './provider-marks.ts'
+
+/** One coloured piece of a brand mark; paths without a fill take the gradient. */
+interface ColorShape {
+  readonly d: string
+  readonly fill?: string
+}
+
+interface ColorMark {
+  readonly disc?: string
+  readonly gradient?: readonly [string, string]
+  readonly shapes: readonly ColorShape[]
+}
+
+const STEPFUN_PATH =
+  'M12 0C5.372 0 0 5.372 0 12s5.372 12 12 12 12-5.372 12-12S18.628 0 12 0zM8.762 19.614H4.376v-4.386h4.386v4.386zm5.423 0H9.798v-4.386h4.387v4.386zm0-5.42H9.798V9.81h4.387v4.386zm0-5.418H9.798V4.39h4.387v4.386zm5.422-.004h-4.386V4.386h4.386v4.386z'
+const ZHIPU_PATH =
+  'M11.991 23.503a.24.24 0 00-.244.248.24.24 0 00.244.249.24.24 0 00.245-.249.24.24 0 00-.22-.247l-.025-.001zM9.671 5.365a1.697 1.697 0 011.099 2.132l-.071.172-.016.04-.018.054c-.07.16-.104.32-.104.498-.035.71.47 1.279 1.186 1.314h.366c1.309.053 2.338 1.173 2.286 2.523-.052 1.332-1.152 2.38-2.478 2.327h-.174c-.715.018-1.274.64-1.239 1.368 0 .124.018.23.053.337.209.373.54.658.96.8.75.23 1.517-.125 1.9-.782l.018-.035c.402-.64 1.17-.96 1.92-.711.854.284 1.378 1.226 1.099 2.167a1.661 1.661 0 01-2.077 1.102 1.711 1.711 0 01-.907-.711l-.017-.035c-.2-.323-.463-.58-.851-.711l-.056-.018a1.646 1.646 0 00-1.954.746 1.66 1.66 0 01-1.065.764 1.677 1.677 0 01-1.989-1.279c-.209-.906.332-1.83 1.257-2.043a1.51 1.51 0 01.296-.035h.018c.68-.071 1.151-.622 1.116-1.333a1.307 1.307 0 00-.227-.693 2.515 2.515 0 01-.366-1.403 2.39 2.39 0 01.366-1.208c.14-.195.21-.444.227-.693.018-.71-.506-1.261-1.186-1.332l-.07-.018a1.43 1.43 0 01-.299-.07l-.05-.019a1.7 1.7 0 01-1.047-2.114 1.68 1.68 0 012.094-1.101zm-5.575 10.11c.26-.264.639-.367.994-.27.355.096.633.379.728.74.095.362-.007.748-.267 1.013-.402.41-1.053.41-1.455 0a1.062 1.062 0 010-1.482zm14.845-.294c.359-.09.738.024.992.297.254.274.344.665.237 1.025-.107.36-.396.634-.756.718-.551.128-1.1-.22-1.23-.781a1.05 1.05 0 01.757-1.26zm-.064-4.39c.314.32.49.753.49 1.206 0 .452-.176.886-.49 1.206-.315.32-.74.5-1.185.5-.444 0-.87-.18-1.184-.5a1.727 1.727 0 010-2.412 1.654 1.654 0 012.369 0zm-11.243.163c.364.484.447 1.128.218 1.691a1.665 1.665 0 01-2.188.923c-.855-.36-1.26-1.358-.907-2.228a1.68 1.68 0 011.33-1.038c.593-.08 1.183.169 1.547.652zm11.545-4.221c.368 0 .708.2.892.524.184.324.184.724 0 1.048a1.026 1.026 0 01-.892.524c-.568 0-1.03-.47-1.03-1.048 0-.579.462-1.048 1.03-1.048zm-14.358 0c.368 0 .707.2.891.524.184.324.184.724 0 1.048a1.026 1.026 0 01-.891.524c-.569 0-1.03-.47-1.03-1.048 0-.579.461-1.048 1.03-1.048zm10.031-1.475c.925 0 1.675.764 1.675 1.706s-.75 1.705-1.675 1.705-1.674-.763-1.674-1.705c0-.942.75-1.706 1.674-1.706zm-2.626-.684c.362-.082.653-.356.761-.718a1.062 1.062 0 00-.238-1.028 1.017 1.017 0 00-.996-.294c-.547.14-.881.7-.752 1.257.13.558.675.907 1.225.783zm0 16.876c.359-.087.644-.36.75-.72a1.062 1.062 0 00-.237-1.019 1.018 1.018 0 00-.985-.301 1.037 1.037 0 00-.762.717c-.108.361-.017.754.239 1.028.245.263.606.377.953.305l.043-.01zM17.19 3.5a.631.631 0 00.628-.64c0-.355-.279-.64-.628-.64a.631.631 0 00-.628.64c0 .355.28.64.628.64zm-10.38 0a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64a.631.631 0 00-.628.64c0 .355.279.64.628.64zm-5.182 7.852a.631.631 0 00-.628.64c0 .354.28.639.628.639a.63.63 0 00.627-.606l.001-.034a.62.62 0 00-.628-.64zm5.182 9.13a.631.631 0 00-.628.64c0 .355.279.64.628.64a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64zm10.38.018a.631.631 0 00-.628.64c0 .355.28.64.628.64a.631.631 0 00.628-.64c0-.355-.279-.64-.628-.64zm5.182-9.148a.631.631 0 00-.628.64c0 .354.279.639.628.639a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64zm-.384-4.992a.24.24 0 00.244-.249.24.24 0 00-.244-.249.24.24 0 00-.244.249c0 .142.122.249.244.249zM11.991.497a.24.24 0 00.245-.248A.24.24 0 0011.99 0a.24.24 0 00-.244.249c0 .133.108.236.223.247l.021.001zM2.011 6.36a.24.24 0 00.245-.249.24.24 0 00-.244-.249.24.24 0 00-.244.249.24.24 0 00.244.249zm0 11.263a.24.24 0 00-.243.248.24.24 0 00.244.249.24.24 0 00.244-.249.252.252 0 00-.244-.248zm19.995-.018a.24.24 0 00-.245.248.24.24 0 00.245.25.24.24 0 00.244-.25.252.252 0 00-.244-.248z'
+const MINIMAX_PATH =
+  'M16.278 2c1.156 0 2.093.927 2.093 2.07v12.501a.74.74 0 00.744.709.74.74 0 00.743-.709V9.099a2.06 2.06 0 012.071-2.049A2.06 2.06 0 0124 9.1v6.561a.649.649 0 01-.652.645.649.649 0 01-.653-.645V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v7.472a2.037 2.037 0 01-2.048 2.026 2.037 2.037 0 01-2.048-2.026v-12.5a.785.785 0 00-.788-.753.785.785 0 00-.789.752l-.001 15.904A2.037 2.037 0 0113.441 22a2.037 2.037 0 01-2.048-2.026V18.04c0-.356.292-.645.652-.645.36 0 .652.289.652.645v1.934c0 .263.142.506.372.638.23.131.514.131.744 0a.734.734 0 00.372-.638V4.07c0-1.143.937-2.07 2.093-2.07zm-5.674 0c1.156 0 2.093.927 2.093 2.07v11.523a.648.648 0 01-.652.645.648.648 0 01-.652-.645V4.07a.785.785 0 00-.789-.78.785.785 0 00-.789.78v14.013a2.06 2.06 0 01-2.07 2.048 2.06 2.06 0 01-2.071-2.048V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v3.8a2.06 2.06 0 01-2.071 2.049A2.06 2.06 0 010 12.9v-1.378c0-.357.292-.646.652-.646.36 0 .653.29.653.646V12.9c0 .418.343.757.766.757s.766-.339.766-.757V9.099a2.06 2.06 0 012.07-2.048 2.06 2.06 0 012.071 2.048v8.984c0 .419.343.758.767.758.423 0 .766-.339.766-.758V4.07c0-1.143.937-2.07 2.093-2.07z'
+
+const HUNYUAN_DISC = '#0055E9'
+const HUNYUAN_SHAPES: readonly ColorShape[] = [
+  {
+    d: 'M12 0c.518 0 1.028.033 1.528.096A6.188 6.188 0 0112.12 12.28l-.12.001c-2.99 0-5.242 2.179-5.554 5.11-.223 2.086.353 4.412 2.242 6.146C3.672 22.1 0 17.479 0 12 0 5.373 5.373 0 12 0z',
+    fill: '#A8DFF5',
+  },
+  {
+    d: 'M5.286 5a2.438 2.438 0 01.682 3.38c-3.962 5.966-3.215 10.743 2.648 15.136C3.636 22.056 0 17.452 0 12c0-1.787.39-3.482 1.09-5.006.253-.435.525-.872.817-1.311A2.438 2.438 0 015.286 5z',
+    fill: '#0055E9',
+  },
+  {
+    d: 'M12.98.04c.272.021.543.053.81.093.583.106 1.117.254 1.538.44 6.638 2.927 8.07 10.052 1.748 15.642a4.125 4.125 0 01-5.822-.358c-1.51-1.706-1.3-4.184.357-5.822.858-.848 3.108-1.223 4.045-2.441 1.257-1.634 2.122-6.009-2.523-7.506L12.98.039z',
+    fill: '#00BCFF',
+  },
+  {
+    d: 'M13.528.096A6.187 6.187 0 0112 12.281a5.75 5.75 0 00-1.71.255c.147-.905.595-1.784 1.321-2.501.858-.848 3.108-1.223 4.045-2.441 1.27-1.651 2.14-6.104-2.676-7.554.184.014.367.033.548.056z',
+    fill: '#ECECEE',
+  },
+]
+const ZHIPU_COLOR = '#3859FF'
+const MINIMAX_GRADIENT: readonly [string, string] = ['#E2167E', '#FE603C']
 
 const MONOCHROME: Readonly<Partial<Record<ProviderMarkId, readonly string[]>>> = {
   codex: [
@@ -20,6 +61,7 @@ const MONOCHROME: Readonly<Partial<Record<ProviderMarkId, readonly string[]>>> =
     'M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0z',
     'M11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z',
   ],
+  stepfun: [STEPFUN_PATH],
 }
 
 const DEEPSEEK_PATH =
@@ -36,9 +78,12 @@ const CODEBUDDY_FACE_PATHS = [
   'M12.139 18.2a1.203 1.203 0 011.642.44l1.296 2.243a1.204 1.204 0 01-2.083 1.203l-1.296-2.243a1.203 1.203 0 01.44-1.644zM18.629 14.452a1.203 1.203 0 011.642.44l1.295 2.244a1.203 1.203 0 11-2.083 1.203l-1.295-2.243a1.203 1.203 0 01.44-1.644z',
 ]
 
-const COLORED: Readonly<Partial<Record<ProviderMarkId, { readonly path: string; readonly color: string }>>> = {
-  deepseek: { path: DEEPSEEK_PATH, color: DEEPSEEK_COLOR },
-  claude: { path: CLAUDE_PATH, color: CLAUDE_COLOR },
+const COLORED: Readonly<Partial<Record<ProviderMarkId, ColorMark>>> = {
+  deepseek: { shapes: [{ d: DEEPSEEK_PATH, fill: DEEPSEEK_COLOR }] },
+  claude: { shapes: [{ d: CLAUDE_PATH, fill: CLAUDE_COLOR }] },
+  hunyuan: { disc: HUNYUAN_DISC, shapes: HUNYUAN_SHAPES },
+  zhipu: { shapes: [{ d: ZHIPU_PATH, fill: ZHIPU_COLOR }] },
+  minimax: { gradient: MINIMAX_GRADIENT, shapes: [{ d: MINIMAX_PATH }] },
 }
 
 interface MarkProps {
@@ -100,10 +145,61 @@ function CodeBuddyMark(props: MarkProps) {
   )
 }
 
-function ColoredMark(props: MarkProps & { readonly path: string; readonly color: string }) {
+function ColoredMark(props: MarkProps & { readonly mark: ColorMark }): ReactElement {
+  const gradient = useId().replace(/:/g, '')
+  const paint = props.mark.gradient === undefined ? '' : `url(#${gradient})`
   return (
     <svg {...svgProps(props, '0 0 24 24')}>
-      <path fill={props.color} d={props.path} />
+      {props.mark.gradient !== undefined && (
+        <defs>
+          <linearGradient id={gradient} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor={props.mark.gradient[0]} />
+            <stop offset="1" stopColor={props.mark.gradient[1]} />
+          </linearGradient>
+        </defs>
+      )}
+      {props.mark.disc !== undefined && <circle cx="12" cy="12" r="12" fill={props.mark.disc} />}
+      {props.mark.shapes.map((shape) => (
+        <path key={shape.d} d={shape.d} fill={paint === '' ? (shape.fill ?? 'currentColor') : paint} />
+      ))}
+    </svg>
+  )
+}
+
+/** lobe-icons ships only a MiMo wordmark, unreadable at the menu's 14px. Use a monogram. */
+function XiaomiMark(props: MarkProps): ReactElement {
+  return (
+    <svg {...svgProps(props, '0 0 24 24')}>
+      <rect x="1" y="1" width="22" height="22" rx="6" fill="#FF6900" />
+      <path
+        d="M6 17V7.6l6 6.9 6-6.9V17"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/**
+ * A model whose maker cannot be read gets a neutral glyph. Any brand here, even one meant as
+ * a placeholder, would read as a claim about who made the model.
+ */
+function UnknownMark(props: MarkProps): ReactElement {
+  return (
+    <svg
+      {...svgProps(props, '0 0 24 24')}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.7 9.3a2.4 2.4 0 1 1 3.1 2.3c-.7.3-1 .9-1 1.6v.4" />
+      <path d="M12 17.2h.01" />
     </svg>
   )
 }
@@ -144,8 +240,10 @@ function GenericCliMark(props: MarkProps) {
 export function MarkGlyph({ id, size }: MarkProps): ReactElement {
   if (id === 'omp') return <OmpMark id={id} size={size} />
   if (id === 'codebuddy') return <CodeBuddyMark id={id} size={size} />
+  if (id === 'unknown') return <UnknownMark id={id} size={size} />
+  if (id === 'xiaomi') return <XiaomiMark id={id} size={size} />
   const colored = COLORED[id]
-  if (colored !== undefined) return <ColoredMark id={id} size={size} {...colored} />
+  if (colored !== undefined) return <ColoredMark id={id} size={size} mark={colored} />
   const paths = MONOCHROME[id]
   if (paths !== undefined) return <MonochromeMark id={id} size={size} paths={paths} />
   return <GenericCliMark id={id} size={size} />

@@ -12,7 +12,8 @@ import { Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
-import type {} from '@deepseek-ai/dsh-llm'
+import { LlmError } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -21,16 +22,18 @@ import { CliBridgeAdapter } from './adapter.ts'
 import { CliSession } from './cli-session.ts'
 import type { PermissionAsk } from './cli-session.ts'
 import { createCliTool } from './cli-tool.ts'
-import { CLI_TOOL_NAME, cliRoute } from './constants.ts'
+import { CLI_TOOL_NAME, cliRoute, isCliRoute } from './constants.ts'
 import { ModelCacheFile } from './model-cache.ts'
 import { CliModelCatalog } from './model-catalog.ts'
-import type { CliModelList } from './model-options.ts'
+import type { CliModeList, CliModelList } from './model-options.ts'
+import { registerModeRoute } from './mode-routes.ts'
 import type { ImageRef } from './prompt-images.ts'
 import { probeModels } from './model-probe.ts'
 import { npxCacheDir, startFromNpxCache } from './npx-cache.ts'
 import { gitHandler, registerGitRoutes } from './git/git-routes.ts'
 import type { GitConnection, GitWebServer } from './git/git-routes.ts'
 import { readPtcWrap } from './session/ptc-call.ts'
+import { CliAskPolicy } from './session/approval-policy.ts'
 import { CliSessionRegistry } from './session-registry.ts'
 import type { CliAgentConfig, SessionStart } from './session-registry.ts'
 import { openStdioTransport } from './stdio-transport.ts'
@@ -76,6 +79,22 @@ export interface Config {
   cancelGraceMs: number
   /** Time a CLI may take to start and accept a session, which must allow for a cold `npx` download. */
   startTimeoutMs: number
+  /** Stateless, non-CLI provider for auto-review requests; empty leaves auto-review off. */
+  reviewProvider: string
+  /** Model on that provider; empty picks its first listed model. */
+  reviewModel: string
+}
+
+const REVIEW_ROUTE_UNSET =
+  '「EXP 自动审查」需要一个独立的审查模型，插件不会替你挑选：请在插件配置里设置 reviewProvider（以及可选的 reviewModel），或用 /permission 改用其它访问模式。'
+const REVIEW_ROUTE_IS_CLI = '「EXP 自动审查」的 reviewProvider 不能是 CLI，请设置为 DeepSeek 等非 CLI 的模型提供方。'
+const REVIEW_MODEL_MISSING =
+  '「EXP 自动审查」读不到 reviewProvider 的模型列表，无法确定审查模型：请在插件配置里设置 reviewModel，或检查该提供方的配置。'
+
+/** A stateless provider/model pair that can serve auxiliary requests. */
+interface ReviewRoute {
+  readonly provider: string
+  readonly model: string
 }
 
 /** Service behind `ctx.cliBridge`. */
@@ -98,12 +117,15 @@ export default class CliBridge extends Service {
     disposeEofGraceMs: z.number().min(1).default(6_000),
     cancelGraceMs: z.number().min(1).default(10_000),
     startTimeoutMs: z.number().min(1).default(120_000),
+    reviewProvider: z.string().default(''),
+    reviewModel: z.string().default(''),
   })
 
   private readonly registry: CliSessionRegistry
   private readonly catalog: CliModelCatalog
   /** Ends any model probe still running when this plugin goes away. */
   private readonly probes = new AbortController()
+  private readonly askPolicy = new CliAskPolicy((message) => this.ctx.logger.warn(message))
   private readonly loginPath: LoginPath
 
   constructor(
@@ -144,7 +166,7 @@ export default class CliBridge extends Service {
     this.restoreModels(modelCache)
     this.registerRoutes()
     this.followSessions()
-    this.serveGit()
+    this.serveWebRoutes()
   }
 
   /** Read in the background: the menu works without it, and fills in once it arrives. */
@@ -167,10 +189,11 @@ export default class CliBridge extends Service {
   }
 
   /**
-   * The 变更 panel's git routes. Taken as optional dependencies: a harness without a web
-   * server (a headless run) still gets the CLIs, just not the panel's backend.
+   * The 变更 panel's git routes and the composer's mode route. Taken as optional
+   * dependencies: a harness without a web server (a headless run) still gets the CLIs,
+   * just not the panel's backend.
    */
-  private serveGit(): void {
+  private serveWebRoutes(): void {
     this.ctx.inject(['webServer', 'connection'], (child) => {
       const handler = gitHandler(
         (spec) => child.subprocess.spawn(spec),
@@ -178,7 +201,46 @@ export default class CliBridge extends Service {
         (message) => child.logger.warn(message),
       )
       child.effect(() => registerGitRoutes(child.webServer, handler), 'ccgui: git routes')
+      child.effect(
+        () =>
+          registerModeRoute(
+            child.webServer,
+            {
+              modeState: (sessionId, provider) => this.modeState(sessionId, provider),
+              switchMode: (sessionId, provider, mode) => this.switchMode(sessionId, provider, mode),
+            },
+            child.connection,
+            (message) => child.logger.warn(message),
+          ),
+        'ccgui: mode route',
+      )
     })
+  }
+
+  /**
+   * The native modes to show for a session. A live CLI's own report wins; before it starts,
+   * the catalog's last answer for that route fills in.
+   */
+  private modeState(sessionId: string, provider: string): { modes?: CliModeList; pending?: string } {
+    const { modes, pending } = this.registry.modeStateFor(sessionId, provider)
+    const known = modes ?? this.catalog.modesFor(provider)
+    return { ...(known === undefined ? {} : { modes: known }), ...(pending === undefined ? {} : { pending }) }
+  }
+
+  /**
+   * Switch a session's CLI mode. A pick made before the CLI starts is only stored, so it is
+   * checked here against what that CLI reported; an id it never offered would otherwise wait
+   * for the first message and fail there.
+   */
+  private async switchMode(sessionId: string, provider: string, mode: string): Promise<CliModeList | undefined> {
+    if (this.registry.isCliRoute(provider)) {
+      const { modes } = this.modeState(sessionId, provider)
+      if (modes === undefined) throw new LlmError('还没有读到这个 CLI 的模式列表，请稍后再试。', 'CLI_MODE_FAILED')
+      if (!modes.options.some((option) => option.value === mode)) {
+        throw new LlmError(`这个 CLI 没有报告模式 ${mode}。`, 'CLI_MODE_FAILED')
+      }
+    }
+    return this.registry.switchMode(sessionId, provider, mode)
   }
 
   private registerRoutes(): void {
@@ -194,6 +256,7 @@ export default class CliBridge extends Service {
           modelsFor: (provider) => catalog.listModels(provider),
           modelName: (provider, model) => catalog.modelName(provider, model),
           reasoningFor: (provider, model) => catalog.reasoning(provider, model),
+          auxiliaryStream: (options) => this.auxiliaryStream(options),
         }),
       )
     }
@@ -202,6 +265,43 @@ export default class CliBridge extends Service {
     ctx.tools.register(createCliTool({ waitForTool: (exec) => registry.waitForTool(exec) }), {
       when: ({ modelSelection }) => registry.isCliRoute(modelSelection.provider),
     })
+  }
+
+  private async firstModel(provider: string): Promise<string | undefined> {
+    try {
+      const models = await this.ctx.llm.listModels(provider)
+      return models[0]?.id
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`ccgui: could not list models for ${provider}: ${String(error)}`)
+      return undefined
+    }
+  }
+
+  /**
+   * The reviewer's route, only ever the one the user configured. The review carries the
+   * conversation, so picking a provider on the user's behalf would send their code, and the
+   * bill, somewhere they never chose. A CLI route would hand the review back to this adapter.
+   */
+  private async reviewRoute(): Promise<ReviewRoute> {
+    const { reviewProvider, reviewModel } = this.config
+    if (reviewProvider === '') throw new LlmError(REVIEW_ROUTE_UNSET, 'UNSUPPORTED_OPTION')
+    if (isCliRoute(reviewProvider)) throw new LlmError(REVIEW_ROUTE_IS_CLI, 'UNSUPPORTED_OPTION')
+    const model = reviewModel === '' ? await this.firstModel(reviewProvider) : reviewModel
+    if (model === undefined) throw new LlmError(REVIEW_MODEL_MISSING, 'UNSUPPORTED_OPTION')
+    return { provider: reviewProvider, model }
+  }
+
+  /**
+   * Reviewer calls arrive stamped with the main agent's CLI route. Re-route them
+   * to a stateless provider, keeping the frozen request intact, so the review
+   * policy and history never become a `session/prompt` in the user's CLI turn. The
+   * reasoning level stays behind: it was chosen for the CLI's model, and the harness
+   * refuses a level the reviewer's model does not offer.
+   */
+  private async *auxiliaryStream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
+    const route = await this.reviewRoute()
+    const { reasoningEffort: _cliEffort, ...request } = options
+    yield* this.ctx.llm.stream({ ...request, provider: route.provider, model: route.model })
   }
 
   private followSessions(): void {
@@ -237,16 +337,23 @@ export default class CliBridge extends Service {
     )
   }
 
+  /**
+   * Answer one CLI permission request. The CLI decided to ask; the harness's own access
+   * mode must not answer it on the user's behalf, so a "never ask" stance is lifted while
+   * the question is open (see session/approval-policy.ts).
+   */
   private ask(agent: Agent, { reason, callId }: PermissionAsk, signal: AbortSignal): Promise<ApprovalOutcome> {
     const approval = this.ctx.get('approval')
     if (approval === undefined) return Promise.resolve('unavailable')
-    return approval.request({
-      agent,
-      toolName: CLI_TOOL_NAME,
-      reason,
-      signal,
-      ...(callId === undefined ? {} : { callId: callId as ToolRunContext['callId'] }),
-    })
+    return this.askPolicy.asking(approval, agent, () =>
+      approval.request({
+        agent,
+        toolName: CLI_TOOL_NAME,
+        reason,
+        signal,
+        ...(callId === undefined ? {} : { callId: callId as ToolRunContext['callId'] }),
+      }),
+    )
   }
 
   private openTransport(agent: CliAgentConfig, cwd: string, handlers: TransportHandlers): AcpTransport {
@@ -317,7 +424,10 @@ export default class CliBridge extends Service {
       cancelGraceMs: this.config.cancelGraceMs,
       startTimeoutMs: this.config.startTimeoutMs,
       knownModels: () => this.catalog.known(provider),
+      ...(start.initialMode === undefined ? {} : { initialMode: start.initialMode }),
+      ...(start.onModeRefused === undefined ? {} : { onModeRefused: start.onModeRefused }),
       onEfforts: (model, effort) => this.catalog.learnEfforts(provider, model, effort),
+      onModes: (modes) => this.catalog.learnModes(provider, modes),
       readImage: (ref, signal) => this.readImage(ref, signal),
       onError: (error) => this.ctx.logger.warn(`ccgui: ${agent.name}: ${String(error)}`),
       openTransport: (handlers) => this.openTransport(agent, cwd, handlers),

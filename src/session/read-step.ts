@@ -8,8 +8,8 @@ import type { LlmError, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { appendDelta, closeOpenBlock, EMPTY_BLOCKS } from '../stream-blocks.ts'
 import type { BlockState } from '../stream-blocks.ts'
 import type { ToolRecord } from '../tool-record.ts'
-import { toolCallStep, turnEndStep, turnFailure } from './outcomes.ts'
-import type { ReplayFields, StepResult } from './outcomes.ts'
+import { toolCallStep, turnDiagnostics, turnEndStep, turnFailure } from './outcomes.ts'
+import type { ReplayFields, StepResult, TurnOutcome } from './outcomes.ts'
 import type { PtcWrap } from './ptc-call.ts'
 import type { TurnEnd } from './turn-queue.ts'
 import type { SessionEvent } from './types.ts'
@@ -40,10 +40,15 @@ export interface StepSource {
  */
 export async function* readStep(source: StepSource, signal: AbortSignal | undefined): AsyncGenerator<StreamChunk> {
   let blocks = EMPTY_BLOCKS
+  // A refusal's reason arrives as ordinary text; keep it so the finish can name it. Thinking
+  // is left out: it is the model's working, already shown, and no explanation of a refusal.
+  // So are this plugin's own notices, which would hide the reason the CLI attached.
+  let text = ''
   while (source.hasWork()) {
     const event = await source.nextEvent(signal)
+    if (event.type === 'text' && event.notice !== true) text += event.text
     if (source.owesInput() && event.type === 'turn-end') continue
-    const step = applyEvent(source, blocks, event)
+    const step = applyEvent(source, blocks, event, text)
     blocks = step.state
     yield* step.chunks
     if (step.done) return
@@ -54,7 +59,7 @@ export async function* readStep(source: StepSource, signal: AbortSignal | undefi
   yield* [...chunks, finish]
 }
 
-function applyEvent(source: StepSource, blocks: BlockState, event: SessionEvent): StepResult {
+function applyEvent(source: StepSource, blocks: BlockState, event: SessionEvent, detail: string): StepResult {
   switch (event.type) {
     case 'text':
     case 'reasoning':
@@ -66,7 +71,7 @@ function applyEvent(source: StepSource, blocks: BlockState, event: SessionEvent)
         : toolCallStep(blocks, record, source.replay(), source.ptc)
     }
     case 'turn-end':
-      return applyTurnEnd(source, blocks, event)
+      return applyTurnEnd(source, blocks, event, detail)
     case 'failure':
       throw turnFailure(event.error, source.label)
   }
@@ -80,7 +85,17 @@ function applyEvent(source: StepSource, blocks: BlockState, event: SessionEvent)
  * divide the whole turn's output by the last step's time, and context occupancy would add
  * up every request's prompt. Showing nothing beats showing wrong numbers.
  */
-function applyTurnEnd(source: StepSource, blocks: BlockState, end: Extract<TurnEnd, { type: 'turn-end' }>): StepResult {
+function applyTurnEnd(
+  source: StepSource,
+  blocks: BlockState,
+  end: Extract<TurnEnd, { type: 'turn-end' }>,
+  detail: string,
+): StepResult {
   if (source.hasWork()) return { state: blocks, chunks: [], done: false }
-  return turnEndStep(blocks, end.stopReason, source.label, source.replay())
+  const outcome: TurnOutcome = {
+    stopReason: end.stopReason,
+    text: detail,
+    diagnostics: turnDiagnostics(end.meta, end.stderr),
+  }
+  return turnEndStep(blocks, outcome, source.label, source.replay())
 }

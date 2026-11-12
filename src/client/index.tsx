@@ -24,8 +24,10 @@ import { arrangeChoices, createCliPrefs } from './cli-prefs.ts'
 import type { CliPrefs, CliPrefsStorage } from './cli-prefs.ts'
 import type { DirectorySelection, DirectoryState } from './choices.ts'
 import { ProviderMark } from './marks.tsx'
+import { CliModeSeat } from './mode-seat.tsx'
 import { CliModelMenu } from './model-menu.tsx'
 import { MODEL_MENU_STYLES } from './model-menu-styles.ts'
+import { modeApiFor } from './mode-api.ts'
 import {
   SESSION_STATUS_SLOT,
   SESSION_STATUS_STYLES,
@@ -99,6 +101,10 @@ interface ClientContext {
 
 const SLOT = 'conversation.input.left'
 const MODEL_SLOT = 'conversation.input.right'
+/** Beside the CLI switcher: a CLI's mode belongs to that CLI session, read next to its name. */
+const MODE_SLOT = 'conversation.input.left'
+/** Right after the switcher, which registers with the default order. */
+const MODE_SEAT_ORDER = 1
 const SESSION_ROW_SLOT = 'sidebar.session.row.leading'
 /** Keeps the menu last in its slot, which is where the harness's own seat would be. */
 const MODEL_MENU_ORDER = 1000
@@ -309,12 +315,13 @@ function registerSwitchableFeatures(ctx: ClientContext, settings: FeatureSetting
 export const inject = ['slots', 'modelDirectories', 'sessions']
 
 /**
- * Add the switcher and the model menu to the composer, and a terminal button to the header.
+ * Put the composer's controls in their seats: the CLI switcher, the model menu that takes
+ * the harness's seat on CLI sessions only, and the CLI's modes in the seat that answers
+ * "what may run".
  * @param ctx - the plugin's client context.
+ * @param cliPrefs - the remembered CLI choice, which the switcher orders itself by.
  */
-export function apply(ctx: ClientContext): void {
-  ctx.effect(installStyles, 'ccgui: styles')
-  const cliPrefs = createCliPrefs(BROWSER_STORAGE)
+function registerComposerSlots(ctx: ClientContext, cliPrefs: CliPrefs): void {
   ctx.slots.inject(SLOT, () =>
     ctx.slots.register(
       {
@@ -350,12 +357,55 @@ export function apply(ctx: ClientContext): void {
       SessionMark,
     ),
   )
+}
+
+/**
+ * Put the CLI's own mode beside the switcher. A harness session renders nothing here: its
+ * access control keeps the composer's permission seat, and the styles hide that control
+ * only while the CLI's mode control shows.
+ * @param ctx - the plugin's client context.
+ */
+function registerModeSeat(ctx: ClientContext): void {
+  ctx.slots.inject(MODE_SLOT, () =>
+    ctx.slots.register(
+      {
+        name: MODE_SLOT,
+        id: 'dsh-ccgui.mode-seat',
+        order: MODE_SEAT_ORDER,
+        inject: (sessionId) => ({
+          ...directoryFace(ctx, sessionId),
+          // `window.fetch` needs its receiver, so it is wrapped rather than passed bare.
+          modes: modeApiFor((input, init) => window.fetch(input, init), sessionId),
+        }),
+      },
+      CliModeSeat,
+    ),
+  )
+}
+
+/**
+ * Mark each session row and its header with the CLI it runs on.
+ * @param ctx - the plugin's client context.
+ */
+function registerSessionMarks(ctx: ClientContext): void {
   ctx.slots.inject(SESSION_STATUS_SLOT, () =>
     ctx.slots.register(
       { name: SESSION_STATUS_SLOT, id: 'dsh-ccgui.session-status-mark', inject: () => ({ list: ctx.sessions.list }) },
       SessionStatusMark,
     ),
   )
+}
+
+/**
+ * Add the switcher and the model menu to the composer, and a terminal button to the header.
+ * @param ctx - the plugin's client context.
+ */
+export function apply(ctx: ClientContext): void {
+  ctx.effect(installStyles, 'ccgui: styles')
+  const cliPrefs = createCliPrefs(BROWSER_STORAGE)
+  registerComposerSlots(ctx, cliPrefs)
+  registerModeSeat(ctx)
+  registerSessionMarks(ctx)
   const settings = createFeatureSettings(BROWSER_STORAGE)
   registerSettingsPage(ctx, settings, cliPrefs)
   registerSwitchableFeatures(ctx, settings)

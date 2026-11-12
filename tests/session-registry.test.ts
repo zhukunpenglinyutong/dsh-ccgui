@@ -27,6 +27,9 @@ function fakeSession(fields: Partial<CliSession> = {}): CliSession {
     abandonTurn: vi.fn(),
     dispose: vi.fn(() => Promise.resolve()),
     waitForTool: vi.fn(() => Promise.resolve({ text: 'ok', failed: false, diffs: [] })),
+    modes: undefined,
+    pendingMode: undefined,
+    switchMode: vi.fn(() => Promise.resolve(undefined)),
     ...fields,
   } as unknown as CliSession
 }
@@ -223,6 +226,16 @@ describe('resolveSession', () => {
     expect(deps.createSession).toHaveBeenCalledTimes(1)
   })
 
+  // A harness permission preset belongs to harness routes. CLI sessions run under
+  // their own native modes, so such an event must not gate or change their startup.
+  it('ignores harness permission presets when starting a CLI', () => {
+    const { registry, deps } = setup()
+    registry.observeEvent('dsh-1', { type: 'permission/preset', data: { preset: 'auto' } })
+    registry.observeEvent('dsh-1', { type: 'permission/preset', data: { preset: 'danger-full-access' } })
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(deps.createSession).toHaveBeenCalledTimes(1)
+  })
+
   it('runs in any other mode', () => {
     const { registry, deps } = setup({ composedPreset: () => 'standard' })
     registry.resolveSession('cli-x', 'dsh-1')
@@ -253,6 +266,22 @@ describe('waitForTool', () => {
     expect(deps.ask).toHaveBeenCalledWith(agent, { reason: 'rm x', callId: 'cli-1' }, askSignal)
   })
 
+  // The CLI decides whether to ask; the bridge forwards whatever it receives. A harness
+  // permission preset must never make the bridge grant a call on the CLI's behalf.
+  it.each(['auto', 'danger-full-access', 'workspace-write'])(
+    'still forwards a permission request after a %s preset event',
+    async (preset) => {
+      const { agent, deps, registry, sessions } = setup()
+      registry.observeEvent('dsh-1', { type: 'permission/preset', data: { preset } })
+      registry.resolveSession('cli-x', 'dsh-1')
+      await expect(registry.waitForTool(execFor(agent))).resolves.toMatchObject({ text: 'ok' })
+      const session = sessions[0] as CliSession
+      const [, ask] = vi.mocked(session.waitForTool).mock.calls[0] as Parameters<CliSession['waitForTool']>
+      await ask({ reason: 'write' }, new AbortController().signal)
+      expect(deps.ask).toHaveBeenCalledTimes(1)
+    },
+  )
+
   it('rejects a call outside a CLI session', async () => {
     const { agent, registry } = setup()
     await expect(registry.waitForTool(execFor(agent))).rejects.toThrow('cli_tool')
@@ -260,6 +289,130 @@ describe('waitForTool', () => {
 
   it('rejects a call with no agent', async () => {
     await expect(setup().registry.waitForTool(execFor(undefined))).rejects.toThrow('cli_tool')
+  })
+})
+
+const MODES = {
+  configId: 'permission_mode',
+  current: 'acceptEdits',
+  options: [
+    { value: 'acceptEdits', name: 'Accept edits' },
+    { value: 'plan', name: 'Plan' },
+  ],
+}
+
+// A CLI's modes are its own: the registry stores and forwards the ids, per route, and
+// never turns one into a harness preset.
+describe('native modes', () => {
+  it('reads a live CLI modes on its own route only', () => {
+    const live = fakeSession({ modes: MODES })
+    const { registry } = setup({ createSession: () => live })
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({})
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({ modes: MODES })
+    expect(registry.modeStateFor('dsh-1', 'cli-y')).toEqual({})
+  })
+
+  it('sends a pick to the live CLI unchanged', async () => {
+    const live = fakeSession({ modes: MODES, switchMode: vi.fn(() => Promise.resolve(MODES)) })
+    const { registry } = setup({ createSession: () => live })
+    registry.resolveSession('cli-x', 'dsh-1')
+    await expect(registry.switchMode('dsh-1', 'cli-x', 'plan')).resolves.toEqual(MODES)
+    expect(live.switchMode).toHaveBeenCalledWith('plan')
+  })
+
+  it('shows a pick the live CLI has not confirmed yet', () => {
+    const live = fakeSession({ modes: MODES, pendingMode: 'plan' })
+    const { registry } = setup({ createSession: () => live })
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({ modes: MODES, pending: 'plan' })
+  })
+
+  it('stops calling a pick pending once the live CLI has it', async () => {
+    const live = fakeSession({ modes: MODES, switchMode: vi.fn(() => Promise.resolve({ ...MODES, current: 'plan' })) })
+    const { registry } = setup({ createSession: () => live })
+    registry.resolveSession('cli-x', 'dsh-1')
+    await registry.switchMode('dsh-1', 'cli-x', 'plan')
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({ modes: MODES })
+  })
+
+  it('starts a replacement on the mode picked while it ran', async () => {
+    const live = fakeSession({ modes: MODES, replaceable: true, switchMode: vi.fn(() => Promise.resolve(MODES)) })
+    const { deps, registry } = setup({ createSession: vi.fn(() => live) })
+    registry.resolveSession('cli-x', 'dsh-1')
+    await registry.switchMode('dsh-1', 'cli-x', 'plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(vi.mocked(deps.createSession).mock.calls[1]?.[3]).toMatchObject({ initialMode: 'plan' })
+  })
+
+  it('keeps a pick until the CLI starts, and starts it on that mode', async () => {
+    const { deps, registry } = setup()
+    await expect(registry.switchMode('dsh-1', 'cli-x', 'plan')).resolves.toBeUndefined()
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({ pending: 'plan' })
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(vi.mocked(deps.createSession).mock.calls[0]?.[3]).toMatchObject({ initialMode: 'plan' })
+  })
+
+  it('does not carry a pick over to another CLI', async () => {
+    const { deps, registry } = setup()
+    await registry.switchMode('dsh-1', 'cli-y', 'plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(vi.mocked(deps.createSession).mock.calls[0]?.[3]).not.toHaveProperty('initialMode')
+  })
+
+  it('rejects a route that is not a CLI', async () => {
+    await expect(setup().registry.switchMode('dsh-1', 'nope', 'plan')).rejects.toMatchObject({
+      code: 'CLI_MODE_FAILED',
+    })
+  })
+
+  it('drops a pick the CLI refused', async () => {
+    const live = fakeSession({ switchMode: vi.fn(() => Promise.reject(new Error('refused'))) })
+    const { registry } = setup({ createSession: () => live })
+    registry.resolveSession('cli-x', 'dsh-1')
+    await expect(registry.switchMode('dsh-1', 'cli-x', 'plan')).rejects.toThrow('refused')
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({})
+  })
+
+  // The session tells the registry when the CLI would not take a pick made before it
+  // started; a replacement must not start on it again.
+  it('forgets a pick the CLI refused at its first step', async () => {
+    const { deps, registry } = setup({ createSession: vi.fn(() => fakeSession({ replaceable: true })) })
+    await registry.switchMode('dsh-1', 'cli-x', 'plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    const start = vi.mocked(deps.createSession).mock.calls[0]?.[3]
+    start?.onModeRefused?.('plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(vi.mocked(deps.createSession).mock.calls[1]?.[3]).not.toHaveProperty('initialMode')
+  })
+
+  it('keeps a newer pick when an older one is refused', async () => {
+    const { deps, registry } = setup({ createSession: vi.fn(() => fakeSession({ replaceable: true })) })
+    await registry.switchMode('dsh-1', 'cli-x', 'plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    const start = vi.mocked(deps.createSession).mock.calls[0]?.[3]
+    await registry.switchMode('dsh-1', 'cli-x', 'acceptEdits')
+    start?.onModeRefused?.('plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    expect(vi.mocked(deps.createSession).mock.calls[1]?.[3]).toMatchObject({ initialMode: 'acceptEdits' })
+  })
+
+  it('forgets a pick with its session', async () => {
+    const { registry } = setup()
+    await registry.switchMode('dsh-1', 'cli-x', 'plan')
+    registry.disposeSession('dsh-1')
+    expect(registry.modeStateFor('dsh-1', 'cli-x')).toEqual({})
+  })
+
+  it('starts a replacement on the same mode', async () => {
+    const replaced = fakeSession({ replaceable: true })
+    const { deps, registry } = setup({ createSession: vi.fn(() => replaced) })
+    await registry.switchMode('dsh-1', 'cli-x', 'plan')
+    registry.resolveSession('cli-x', 'dsh-1')
+    registry.resolveSession('cli-x', 'dsh-1')
+    const calls = vi.mocked(deps.createSession).mock.calls
+    expect(calls[0]?.[3]).toMatchObject({ initialMode: 'plan' })
+    expect(calls[1]?.[3]).toMatchObject({ initialMode: 'plan' })
   })
 })
 

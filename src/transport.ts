@@ -35,6 +35,13 @@ export interface PromptOutcome {
   readonly stopReason: StopReason
   /** Cumulative token usage for the turn; many CLIs do not report it, and the plugin does not forward it. */
   readonly usage?: Usage | null | undefined
+  /**
+   * What the CLI attached to its answer. A refusal has no field of its own in ACP, so a
+   * CLI that explains itself at all may put the reason here instead of streaming text.
+   */
+  readonly meta?: Readonly<Record<string, unknown>> | null
+  /** The CLI's own stderr tail when the turn ended; some CLIs say nothing anywhere else. */
+  readonly stderr?: string
 }
 
 /** Client side of one ACP connection. */

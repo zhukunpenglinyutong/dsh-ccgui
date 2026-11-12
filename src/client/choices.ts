@@ -21,6 +21,8 @@ export interface DirectoryReasoning {
 interface DirectoryModel {
   readonly id: string
   readonly name: string
+  /** Extra detail the menu shows beside the name, e.g. a CLI's cost multiplier. */
+  readonly description?: string
   readonly reasoning?: DirectoryReasoning
 }
 
