@@ -158,6 +158,27 @@ describe('menuModels on a CLI', () => {
     const models = menuModels({ groups: [waiting], current: { provider: 'cli-claude', model: 'default' } })
     expect(models.unlisted).toBe('Claude Code')
   })
+
+  // The host passes the catalog's description through to the browser directory. Keep it
+  // on the row so the menu can show a CLI's cost multiplier as small print beside the name.
+  it('carries the cost multiplier through without touching the name', () => {
+    const priced = {
+      ...CLAUDE,
+      models: [
+        { id: 'default', name: 'Hy4（默认）' },
+        { id: 'hy4free', name: 'Hy4', description: 'x0.00 credits' },
+        { id: 'hy4std', name: 'Hy4', description: 'x0.29 credits' },
+      ],
+    }
+    const models = menuModels({ groups: [priced], current: { provider: 'cli-claude', model: 'hy4std' } })
+    expect(models.sections[0]?.rows.map((row) => row.name)).toEqual(['Hy4（默认）', 'Hy4', 'Hy4'])
+    expect(models.sections[0]?.rows.map((row) => row.description)).toEqual([
+      undefined,
+      'x0.00 credits',
+      'x0.29 credits',
+    ])
+    expect(models.current?.description).toBe('x0.29 credits')
+  })
 })
 
 describe('row helpers', () => {

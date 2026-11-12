@@ -4,6 +4,8 @@
  * @module dsh-ccgui/client/model-menu-styles
  */
 
+import { CLI_ROUTE_PREFIX } from '../constants.ts'
+
 export const ROOT_CLASS = 'dsh-cli-model'
 export const TRIGGER_CLASS = 'dsh-cli-model-trigger'
 export const ICON_CLASS = 'dsh-cli-model-icon'
@@ -17,16 +19,31 @@ export const ROW_CLASS = 'dsh-cli-model-row'
 export const ROW_ACTIVE_CLASS = 'dsh-cli-model-row-active'
 export const ROW_MARK_CLASS = 'dsh-cli-model-row-mark'
 export const ROW_NAME_CLASS = 'dsh-cli-model-row-name'
+export const ROW_DESCRIPTION_CLASS = 'dsh-cli-model-row-description'
 export const ROW_CHECK_CLASS = 'dsh-cli-model-row-check'
 export const HINT_CLASS = 'dsh-cli-model-hint'
 export const HEADING_CLASS = 'dsh-cli-model-heading'
 export const GROUP_CLASS = 'dsh-cli-model-group'
 export const EFFORT_CLASS = 'dsh-cli-model-effort'
+export const MODE_CLASS = 'dsh-cli-model-mode'
+/** The CLI's mode control, sitting in the composer's permission seat. */
+export const MODE_SEAT_CLASS = 'dsh-cli-mode-seat'
 
-// The first rule hides the harness's seat, which renders right after this control's slot;
-// the anchors set `display: contents` inline, hence `!important`. If the harness changes its
-// markup both controls show, and either still works.
+// On a CLI session the first rule hides the harness's seat, which renders right after this
+// control's slot; the anchors set `display: contents` inline, hence `!important`. A harness
+// session renders no .dsh-cli-model, so its own seat stays together with the settings that
+// live in its menu, such as the agent-team toggle. If the harness changes its markup both
+// controls show, and either still works.
+//
+// That native seat reads one global catalog, so it also lists every CLI even though a session
+// the harness runs cannot move to one. The next rule hides just those groups, keyed by the
+// provider id the harness puts on every model row (cli-..., the same prefix the routes use).
+// Its own providers (deepseek-account, deepseek-official) and the settings in the menu are
+// left alone. The plugin's own menu uses div[role="none"] rows with no provider id and its
+// rows live under .dsh-cli-model-rows, so neither is matched. If the harness drops the
+// attribute the groups simply show again; nothing else breaks.
 export const MODEL_MENU_STYLES = `
+[role="menu"][aria-label="模型"]:not(.${ROWS_CLASS}) section[data-menu-group]:has([data-provider-id^="${CLI_ROUTE_PREFIX}"]) { display: none !important; }
 [data-slot="conversation.input.right"]:has(.${ROOT_CLASS}) + [data-slot="conversation.input.model"] { display: none !important; }
 .${ROOT_CLASS} { position: relative; min-width: 0; }
 .${TRIGGER_CLASS} {
@@ -135,6 +152,17 @@ export const MODEL_MENU_STYLES = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.${ROW_DESCRIPTION_CLASS} {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .${ROW_CHECK_CLASS} { display: grid; place-items: center; flex: 0 0 14px; color: var(--dsw-alias-label-primary); }
 .${ROW_CHECK_CLASS} svg { width: 14px; height: 14px; }
 .${HEADING_CLASS} {
@@ -148,5 +176,14 @@ export const MODEL_MENU_STYLES = `
 /* Where the composer is too narrow for the model's name, the level gives way as well. */
 .${EFFORT_CLASS} { display: var(--dsh-composer-model-text-display, block); flex: 0 0 auto; }
 .${EFFORT_CLASS} .${TRIGGER_CLASS} { padding: 0 4px; color: var(--dsw-alias-label-caption); }
+/* The CLI's own mode sits beside the level, read the same way so neither outranks the name. */
+.${MODE_CLASS} { display: var(--dsh-composer-model-text-display, block); flex: 0 0 auto; }
+.${MODE_CLASS} .${TRIGGER_CLASS} { padding: 0 4px; color: var(--dsw-alias-label-caption); }
+/* The permission seat holds one control: on a CLI session that is the CLI's own mode, so
+   the harness's access control steps aside. It keys on the mode control itself, not its seat:
+   a CLI that reports no modes leaves the seat empty, and the access control must then stay. */
+.${MODE_SEAT_CLASS} { display: inline-flex; min-width: 0; }
+.${MODE_SEAT_CLASS} .${TRIGGER_CLASS} { padding: 0 4px 0 8px; color: var(--dsw-alias-label-secondary); }
+[data-composer-card]:has(.${MODE_CLASS}) [aria-label^="访问模式"] { display: none !important; }
 .${HINT_CLASS} { padding: 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 `

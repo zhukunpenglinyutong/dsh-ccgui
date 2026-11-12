@@ -19,6 +19,7 @@ const capabilities = {
 }
 const sessions = new Map()
 let currentModel = 'fake-small'
+let currentMode = 'default'
 const TURN_USAGE = { totalTokens: 1200, inputTokens: 150, outputTokens: 50, cachedReadTokens: 1000 }
 const configOptions = () => [
   {
@@ -30,6 +31,17 @@ const configOptions = () => [
     options: [
       { value: 'fake-small', name: 'Fake Small' },
       { value: 'fake-large', name: 'Fake Large' },
+    ],
+  },
+  {
+    id: 'mode',
+    name: 'Mode',
+    category: 'mode',
+    type: 'select',
+    currentValue: currentMode,
+    options: [
+      { value: 'default', name: 'Default' },
+      { value: 'plan', name: 'Plan' },
     ],
   },
 ]
@@ -156,9 +168,31 @@ function hang(sessionId) {
   })
 }
 
+// What CodeBuddy actually returns for an exhausted free-model quota: a stringified
+// JSON-RPC error on `codebuddy.ai/errorMessage`, plus ids that are not a reason.
+const QUOTA_MESSAGE =
+  '当前您在Hy4模型的免费使用量已超出频率限制，可在2026-11-12 12:21:09重置后使用。您可消耗积分继续使用该模型或切换至其他模型。'
+
 function runPrompt(sessionId, text) {
   if (text.trim() === 'WHICH MODEL') {
     say(sessionId, `model=${currentModel}`)
+    return 'end_turn'
+  }
+  if (text.trim().startsWith('REFUSE')) {
+    // Real CLIs refuse without streaming a word. Three shapes: the reason on stderr,
+    // the reason attached as a stringified request error, and a telemetry dump with
+    // no reason at all (which must fall back to the plain failure, not to the dump).
+    if (text.includes('NOISE')) {
+      process.stderr.write(
+        `${JSON.stringify({ traceparent: '00-78d02baf', 'codebuddy.ai/outcome': 'FAILED_MODEL_REQUEST' })}\n`,
+      )
+    } else if (!text.includes('META')) {
+      process.stderr.write('codebuddy: quota exceeded for hy4-free\n')
+    }
+    return 'refusal'
+  }
+  if (text.trim() === 'WHICH MODE') {
+    say(sessionId, `mode=${currentMode}`)
     return 'end_turn'
   }
   const [command, argument] = text.trim().split(/\s+/)
@@ -195,6 +229,7 @@ async function handleRequest({ id, method, params }) {
       return respond(id, { configOptions: configOptions() })
     case 'session/set_config_option':
       if (params.configId === 'model') currentModel = params.value
+      if (params.configId === 'mode') currentMode = params.value
       return respond(id, { configOptions: configOptions() })
     case 'session/delete':
     case 'session/close':
@@ -202,7 +237,31 @@ async function handleRequest({ id, method, params }) {
       return respond(id, {})
     case 'session/prompt': {
       const text = params.prompt.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(' ')
-      return respond(id, { stopReason: await runPrompt(params.sessionId, text), usage: TURN_USAGE })
+      const stopReason = await runPrompt(params.sessionId, text)
+      const meta = text.includes('NOISE')
+        ? {
+            _meta: {
+              traceparent: '00-78d02baf9da0044cd66da266d8900326-6c51ee98c30947fc-01',
+              baggage: 'codebuddy.session_id=01a1ca7f-8949-71d1-ba52-df0cdb8298f3',
+              'codebuddy.ai/traceparent': '00-78d02baf9da0044cd66da266d8900326',
+              'codebuddy.ai/outcome': 'FAILED_MODEL_REQUEST',
+            },
+          }
+        : text.includes('META')
+          ? {
+              _meta: {
+                'codebuddy.ai/requestId': '01a1ca7f8cf27b6281cea546289f2394',
+                'codebuddy.ai/traceId': '1d22272f7805058ce6335d06cdd862a7',
+                'codebuddy.ai/finishReason': 'error',
+                'codebuddy.ai/errorMessage': JSON.stringify({
+                  code: -32003,
+                  message: 'Quota exceeded: Request failed with status code 429',
+                  data: { statusCode: 429, code: 6004, category: 'quota', details: QUOTA_MESSAGE },
+                }),
+              },
+            }
+          : {}
+      return respond(id, { stopReason, usage: TURN_USAGE, ...meta })
     }
     default:
       return send({ id, error: { code: -32601, message: `unknown method ${method}` } })

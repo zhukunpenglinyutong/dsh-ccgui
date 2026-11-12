@@ -8,6 +8,7 @@
 
 import type { CSSProperties, ReactElement, RefObject } from 'react'
 import { IconCheckOutlineRegular, Input, MenuSurface, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { compactDescription } from '../constants.ts'
 import type { DirectorySelection } from './choices.ts'
 import { MarkGlyph } from './marks.tsx'
 import { isRow, rowCount } from './menu-models.ts'
@@ -21,6 +22,7 @@ import {
   ROW_CHECK_CLASS,
   ROW_CLASS,
   ROW_MARK_CLASS,
+  ROW_DESCRIPTION_CLASS,
   ROW_NAME_CLASS,
   ROWS_CLASS,
   SEARCH_CLASS,
@@ -49,6 +51,8 @@ interface ModelRowProps {
 function ModelRow({ domId, model, selected, settling, active, busy, onHover, onChoose }: ModelRowProps): ReactElement {
   const check = selected ? <IconCheckOutlineRegular /> : null
   const mark = modelMarkOf(model)
+  // Prose would crowd the row and push the check mark aside; see compactDescription.
+  const detail = compactDescription(model.description)
   return (
     <button
       type="button"
@@ -65,6 +69,11 @@ function ModelRow({ domId, model, selected, settling, active, busy, onHover, onC
       {/* The slot stays when there is no mark, so every name starts at the same place. */}
       <span className={ROW_MARK_CLASS}>{mark === undefined ? null : <MarkGlyph id={mark} size={ROW_MARK_SIZE} />}</span>
       <span className={ROW_NAME_CLASS}>{model.name}</span>
+      {detail !== undefined && (
+        <span className={ROW_DESCRIPTION_CLASS} title={detail}>
+          {detail}
+        </span>
+      )}
       <span className={ROW_CHECK_CLASS}>{settling ? <StateDot state="ongoing" /> : check}</span>
     </button>
   )

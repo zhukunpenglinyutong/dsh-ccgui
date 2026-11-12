@@ -2,7 +2,8 @@
 
 /**
  * The reasoning level beside the model control, for models that advertise levels. It stands
- * in for the second pane of the harness's seat, which this plugin's control replaces.
+ * in for the second pane of the harness's seat, which this plugin's control replaces on CLI
+ * sessions only.
  * @module dsh-ccgui/client/effort-menu
  */
 

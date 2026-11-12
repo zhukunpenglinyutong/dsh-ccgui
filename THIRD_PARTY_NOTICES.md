@@ -30,16 +30,22 @@ SOFTWARE.
 
 ## Product marks
 
-`src/client/marks.tsx` draws other projects' marks so a person can tell the CLIs apart.
-The names and marks belong to their owners, are not covered by this project's MIT
-license, and imply no endorsement.
+`src/client/marks.tsx` draws other projects' marks so a person can tell the CLIs apart, and
+a model's maker apart in a CLI's model list. The names and marks belong to their owners, are
+not covered by this project's MIT license, and imply no endorsement. A model whose maker is
+not public (for example an anonymous launch such as Space-Bunny) gets a neutral question-mark
+glyph drawn by this project, never another party's logo.
+- Xiaomi MiMo: lobe-icons ships only a wordmark, which is unreadable at the 14px the model
+  menu uses. The orange monogram tile in `marks.tsx` is drawn by this project; no third-party
+  path is used for it.
 
 - OMP: the mark from [omp.sh](https://omp.sh). No license for it has been confirmed.
 - Claude: [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance) call for
   written permission to use its logo beyond naming Claude Code in plain text. No such
   permission has been confirmed. The license below covers only the SVG path.
-- OpenAI (shown for Codex), Claude, Pi, OpenCode, CodeBuddy, Kimi and DeepSeek: the SVG paths from
-  [lobe-icons](https://github.com/lobehub/lobe-icons), under this license:
+- OpenAI (shown for Codex), Claude, Pi, OpenCode, CodeBuddy, Kimi, DeepSeek, Hunyuan, Zhipu,
+  MiniMax and StepFun: the SVG paths from
+  [lobe-icons](https://github.com/lobehub/lobe-icons) v6.15.0, under this license:
 
 MIT License
 

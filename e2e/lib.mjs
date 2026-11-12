@@ -81,9 +81,8 @@ export async function openHarness() {
 
   const cliSwitcher = () => page.getByRole('button', { name: '切换 CLI' })
 
-  /** Start a standard session and put it on a CLI with the composer's switcher. */
-  async function newCliSession(name) {
-    await newSession('标准模式')
+  /** Put the open session on a CLI with the composer's switcher. */
+  async function chooseCli(name) {
     await until(() => cliSwitcher().isVisible(), 'CLI switcher')
     if ((await cliSwitcher().innerText()).trim() === name) return
     await cliSwitcher().click()
@@ -94,6 +93,12 @@ export async function openHarness() {
       .first()
       .click()
     await until(async () => (await cliSwitcher().innerText()).trim() === name, `switcher showing ${name}`)
+  }
+
+  /** Start a standard session and put it on a CLI with the composer's switcher. */
+  async function newCliSession(name) {
+    await newSession('标准模式')
+    await chooseCli(name)
   }
 
   const modelTrigger = () => page.getByRole('button', { name: /^(选择模型|请选择模型)/ }).last()
@@ -131,7 +136,12 @@ export async function openHarness() {
   async function chooseModel(cli, name, timeout = 180_000) {
     await until(async () => (await modelNames(cli)).includes(name), `model ${name}`, timeout)
     await openModelList()
-    await page.getByRole('group', { name: cli, exact: true }).getByRole('menuitemradio', { name, exact: true }).click()
+    // A row's accessible name also contains the small print beside its name (a CLI's
+    // cost multiplier), so match on the title: the same name modelNames() reports.
+    await page
+      .getByRole('group', { name: cli, exact: true })
+      .locator(`[role="menuitemradio"][title=${JSON.stringify(name)}]`)
+      .click()
     await sleep(500)
   }
 
@@ -201,6 +211,7 @@ export async function openHarness() {
     until,
     newSession,
     newCliSession,
+    chooseCli,
     cliSwitcher,
     modelTrigger,
     modelNames,
@@ -215,6 +226,27 @@ export async function openHarness() {
 }
 
 /**
+ * Read a session log as text. DSH appends each batch as its own zstd frame, and neither
+ * the sync nor the streaming decompressor reads past the first one, so the log is split
+ * on the frame magic and each frame is decoded on its own.
+ * @param file - the log's file name, which says whether it is compressed.
+ * @param raw - the file's bytes.
+ * @returns the whole log.
+ */
+function readLog(file, raw) {
+  if (!file.endsWith('.zstd')) return raw.toString()
+  const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+  const frames = []
+  let start = raw.indexOf(magic)
+  while (start !== -1) {
+    const next = raw.indexOf(magic, start + magic.length)
+    frames.push(zstdDecompressSync(raw.subarray(start, next === -1 ? raw.length : next)))
+    start = next
+  }
+  return Buffer.concat(frames).toString()
+}
+
+/**
  * Read the log of the session whose text contains a prompt.
  * @param prompt - text identifying the session.
  * @returns its events, or an empty list.
@@ -226,8 +258,7 @@ export function sessionEvents(prompt) {
       const dir = join(SESSIONS, group, id)
       const file = readdirSync(dir).find((name) => name.startsWith('session') && name.includes('jsonl'))
       if (file === undefined) continue
-      const raw = readFileSync(join(dir, file))
-      const text = file.endsWith('.zstd') ? zstdDecompressSync(raw).toString() : raw.toString()
+      const text = readLog(file, readFileSync(join(dir, file)))
       if (text.includes(prompt))
         return text
           .split('\n')

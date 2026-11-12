@@ -97,6 +97,17 @@ describe('ModelCacheFile', () => {
     expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ version: 1 })
   })
 
+  it('keeps the cost multiplier through a save and read back', async () => {
+    const path = scratch()
+    const priced: CliModelList = {
+      configId: 'model',
+      current: 'glm',
+      options: [{ value: 'glm', name: 'GLM', description: 'x0.69 credits' }],
+    }
+    await new ModelCacheFile(path).save(new Map([['cli-x', priced]]))
+    await expect(new ModelCacheFile(path).read()).resolves.toEqual(new Map([['cli-x', priced]]))
+  })
+
   it('reads a corrupt file as empty', async () => {
     const path = scratch()
     const file = new ModelCacheFile(path)
@@ -139,5 +150,29 @@ describe('ModelCacheFile', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ccgui-cache-'))
     // A directory at the file's path cannot be read as text.
     await expect(new ModelCacheFile(dir).read()).rejects.toThrow()
+  })
+})
+
+// Modes belong to a CLI in its own ids, so a restart must not lose or rename them.
+describe('native modes in the model cache', () => {
+  const MODES = {
+    configId: 'permission_mode',
+    current: 'plan',
+    options: [
+      { value: 'default', name: 'Default' },
+      { value: 'plan', name: 'Plan' },
+    ],
+  }
+
+  it('keeps the modes through a save and read back', async () => {
+    const path = scratch()
+    const list = { ...LIST, modes: MODES }
+    await new ModelCacheFile(path).save(new Map([['cli-x', list]]))
+    await expect(new ModelCacheFile(path).read()).resolves.toEqual(new Map([['cli-x', list]]))
+  })
+
+  it('drops malformed modes but keeps the model list', () => {
+    const text = JSON.stringify({ version: 1, lists: { 'cli-x': { ...LIST, modes: { configId: 5 } } } })
+    expect(parseModelCache(text).get('cli-x')).toEqual(LIST)
   })
 })

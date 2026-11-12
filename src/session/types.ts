@@ -5,7 +5,7 @@
  */
 
 import type { RequestMessage } from '@deepseek-ai/dsh-llm'
-import type { CliEffortList, CliModelList } from '../model-options.ts'
+import type { CliEffortList, CliModeList, CliModelList } from '../model-options.ts'
 import type { ReadImage } from '../prompt-images.ts'
 import type { AcpTransport, TransportHandlers } from '../transport.ts'
 import type { PtcWrap } from './ptc-call.ts'
@@ -31,10 +31,22 @@ export interface CliSessionOptions {
   /** What this CLI reported about its models when asked ahead of any session. */
   readonly knownModels?: () => CliModelList | undefined
   /**
+   * A native mode the user picked before this session existed. Sent with the first step,
+   * since there is no CLI session to change before then.
+   */
+  readonly initialMode?: string
+  /**
    * Told the reasoning levels of each model the CLI reported, undefined for none. Held until
    * the CLI's turn ends: the harness checks the level on every step against the catalog.
    */
   readonly onEfforts?: (model: string, effort: CliEffortList | undefined) => void
+  /**
+   * Told the native modes a new CLI session starts with, in the CLI's own ids and names. Kept
+   * per provider so switching CLIs never carries one CLI's modes over to another.
+   */
+  readonly onModes?: (modes: CliModeList) => void
+  /** Told when the CLI would not take {@link initialMode}, which the session has then dropped. */
+  readonly onModeRefused?: (mode: string) => void
   /** Reads pasted images from the harness; absent when it has no attachment service. */
   readonly readImage?: ReadImage
   /** Receives failures that have no caller left to reject. */
@@ -64,6 +76,11 @@ export interface StreamRequest {
 
 /** What the step reader consumes, in the order it happened. */
 export type SessionEvent =
-  | { readonly type: 'text' | 'reasoning'; readonly text: string }
+  | {
+      readonly type: 'text' | 'reasoning'
+      readonly text: string
+      /** Written by this plugin, not the CLI, so it never explains why the CLI refused. */
+      readonly notice?: true
+    }
   | { readonly type: 'tool-ready'; readonly acpId: string }
   | TurnEnd

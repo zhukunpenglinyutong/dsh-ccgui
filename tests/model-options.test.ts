@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
-import { readEffortList, readModelList } from '../src/model-options.ts'
+import { readEffortList, readModeList, readModelList } from '../src/model-options.ts'
 
 const select = (fields: object): SessionConfigOption => ({
   id: 'model',
@@ -62,7 +62,7 @@ describe('readModelList', () => {
     ]
     expect(readModelList([select({ category: 'model', currentValue: 'default', options })])?.options).toEqual([
       { value: 'default', name: 'Opus 5.5' },
-      { value: 'haiku', name: 'Haiku 5.5' },
+      { value: 'haiku', name: 'Haiku 5.5', description: 'Fastest for quick answers' },
     ])
   })
 
@@ -73,17 +73,19 @@ describe('readModelList', () => {
     ])
   })
 
-  // Recorded from CodeBuddy: two tiers of one model share a name, and only the price tells them apart.
-  it('tells apart models that share a name by their descriptions', () => {
+  // Recorded from CodeBuddy: the description carries the usage cost multiplier. Names
+  // stay as the CLI gave them; the menu shows the multiplier beside each name, which is
+  // also what tells the two Hy4 tiers apart.
+  it('keeps descriptions beside clean names, even for models that share a name', () => {
     const options = [
       { value: 'hy4free', name: 'Hy4', description: 'x0.00 credits' },
       { value: 'hy4std', name: 'Hy4', description: 'x0.29 credits' },
       { value: 'glm', name: 'GLM', description: 'x0.69 credits' },
     ]
     expect(readModelList([select({ category: 'model', currentValue: 'hy4free', options })])?.options).toEqual([
-      { value: 'hy4free', name: 'Hy4 · x0.00 credits' },
-      { value: 'hy4std', name: 'Hy4 · x0.29 credits' },
-      { value: 'glm', name: 'GLM' },
+      { value: 'hy4free', name: 'Hy4', description: 'x0.00 credits' },
+      { value: 'hy4std', name: 'Hy4', description: 'x0.29 credits' },
+      { value: 'glm', name: 'GLM', description: 'x0.69 credits' },
     ])
   })
 
@@ -95,10 +97,23 @@ describe('readModelList', () => {
       { value: 'k-fast', name: 'K' },
     ]
     expect(readModelList([select({ category: 'model', currentValue: 'hy3', options })])?.options).toEqual([
-      { value: 'hy3', name: 'Hy3 · hy3' },
-      { value: 'hy3-x', name: 'Hy3 · hy3-x' },
+      { value: 'hy3', name: 'Hy3 · hy3', description: 'same' },
+      { value: 'hy3-x', name: 'Hy3 · hy3-x', description: 'same' },
       { value: 'k', name: 'K · k' },
       { value: 'k-fast', name: 'K · k-fast' },
+    ])
+  })
+
+  // The menu shows only a compact label beside a name and leaves prose out, so prose cannot
+  // be what tells two rows apart: they would read the same. The ids have to do it.
+  it('falls back to the ids when the descriptions are prose the menu leaves out', () => {
+    const options = [
+      { value: 'hy4-free', name: 'Hy4', description: 'Free tier, limited quota' },
+      { value: 'hy4', name: 'Hy4', description: 'Stronger agentic coding' },
+    ]
+    expect(readModelList([select({ category: 'model', currentValue: 'hy4', options })])?.options).toEqual([
+      { value: 'hy4-free', name: 'Hy4 · hy4-free', description: 'Free tier, limited quota' },
+      { value: 'hy4', name: 'Hy4 · hy4', description: 'Stronger agentic coding' },
     ])
   })
 
@@ -110,7 +125,7 @@ describe('readModelList', () => {
     ]
     expect(readModelList([select({ category: 'model', currentValue: 'default', options })])?.options).toEqual([
       { value: 'default', name: 'Opus 5.5' },
-      { value: 'opus', name: 'Opus 5.5' },
+      { value: 'opus', name: 'Opus 5.5', description: 'Most capable' },
     ])
   })
 
@@ -255,5 +270,78 @@ describe('readModelList with thought levels', () => {
 
   it('leaves levels out for a CLI that offers none', () => {
     expect(readModelList([select({ category: 'model' })])).not.toHaveProperty('efforts')
+  })
+})
+
+// A CLI's modes are its own vocabulary. Nothing here renames an id or folds it into a
+// harness preset: switching sends these values back to the CLI unchanged.
+describe('readModeList', () => {
+  const modes = select({
+    id: 'permission_mode',
+    name: 'Permission mode',
+    category: 'mode',
+    currentValue: 'acceptEdits',
+    options: [
+      { value: 'default', name: 'Default' },
+      { value: 'acceptEdits', name: 'Accept edits' },
+      { value: 'plan', name: 'Plan' },
+    ],
+  })
+
+  const expected = {
+    configId: 'permission_mode',
+    current: 'acceptEdits',
+    options: [
+      { value: 'default', name: 'Default' },
+      { value: 'acceptEdits', name: 'Accept edits' },
+      { value: 'plan', name: 'Plan' },
+    ],
+  }
+
+  it('keeps the CLI ids, names and current value verbatim', () => {
+    expect(readModeList([select({ category: 'model' }), modes])).toEqual(expected)
+  })
+
+  it('attaches the modes to the model list without changing the models', () => {
+    expect(readModelList([select({ category: 'model' }), modes])).toEqual({
+      configId: 'model',
+      current: 'a',
+      options: [
+        { value: 'a', name: 'A' },
+        { value: 'b', name: 'B' },
+      ],
+      modes: expected,
+    })
+  })
+
+  it('finds modes by category, never by an id that merely looks like one', () => {
+    expect(readModeList([select({ id: 'mode' })])).toBeUndefined()
+  })
+
+  it('returns undefined when the CLI reports no modes', () => {
+    expect(readModeList([select({ category: 'model' })])).toBeUndefined()
+    expect(readModeList([])).toBeUndefined()
+    expect(readModeList(undefined)).toBeUndefined()
+  })
+
+  it('does not mistake models or thought levels for modes', () => {
+    expect(readModeList([select({ category: 'model' }), select({ category: 'thought_level' })])).toBeUndefined()
+  })
+
+  it('drops duplicate mode ids but keeps the first of each', () => {
+    const duplicated = select({
+      category: 'mode',
+      currentValue: 'plan',
+      options: [
+        { value: 'plan', name: 'Plan' },
+        { value: 'plan', name: 'Plan again' },
+      ],
+    })
+    expect(readModeList([duplicated])?.options).toEqual([{ value: 'plan', name: 'Plan' }])
+  })
+
+  it('ignores a mode option with no usable id or current value', () => {
+    expect(readModeList([select({ category: 'mode', id: 5 })])).toBeUndefined()
+    expect(readModeList([select({ category: 'mode', currentValue: '' })])).toBeUndefined()
   })
 })

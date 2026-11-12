@@ -66,4 +66,36 @@ describe('MarkGlyph', () => {
     const svg = render(<MarkGlyph id="kimi" size={14} />).container.querySelector('svg')
     expect(svg?.getAttribute('data-cli-mark')).toBe('kimi')
   })
+
+  it.each([
+    // [mark, how it is painted]
+    ['hunyuan', '#0055E9'],
+    ['zhipu', '#3859FF'],
+    ['minimax', 'url(#'],
+    ['stepfun', 'currentColor'],
+    ['xiaomi', '#FF6900'],
+    ['unknown', 'currentColor'],
+  ] as const)('draws the %s model mark', (id, paint) => {
+    const svg = render(<MarkGlyph id={id} size={14} />).container.querySelector('svg')
+    expect(svg?.getAttribute('data-cli-mark')).toBe(id)
+    expect(svg?.querySelectorAll('path').length).toBeGreaterThan(0)
+    expect(svg?.outerHTML).toContain(paint)
+  })
+
+  // Several gradient marks on one page must each paint with their own defs.
+  it.each(['minimax'] as const)('gives every %s mark its own defs', (id) => {
+    const { container } = render(
+      <>
+        <MarkGlyph id={id} size={14} />
+        <MarkGlyph id={id} size={14} />
+      </>,
+    )
+    const defs = Array.from(container.querySelectorAll('[id]'), (node) => node.id)
+    expect(defs.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(defs).size).toBe(defs.length)
+    for (const gradient of Array.from(container.querySelectorAll('linearGradient'))) {
+      expect(gradient.id).not.toContain(':')
+      expect(container.querySelector(`[fill="url(#${gradient.id})"]`)).not.toBeNull()
+    }
+  })
 })

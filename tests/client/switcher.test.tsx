@@ -13,7 +13,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DirectorySelection, DirectoryState } from '../../src/client/choices.ts'
 import { CLI_PREFS_STORAGE_KEY, parseCliPrefs } from '../../src/client/cli-prefs.ts'
 import { apply, inject } from '../../src/client/index.tsx'
+import type { ModeApi } from '../../src/client/mode-api.ts'
 import type { SessionRowValues } from '../../src/client/provider-marks.ts'
+import { MODE_ROUTE_PREFIX } from '../../src/constants.ts'
 import { createStore } from '../fixtures/client-store.ts'
 import type { TestStore } from '../fixtures/client-store.ts'
 
@@ -118,6 +120,9 @@ function renderSlot(h: Harness, id: string, sessionId = 's1') {
 
 const switcher = () => screen.getByRole('button', { name: '切换 CLI' })
 
+const bodyOf = (init: RequestInit): Record<string, unknown> =>
+  typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {}
+
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
@@ -128,12 +133,13 @@ describe('apply', () => {
     expect(inject).toEqual(['slots', 'modelDirectories', 'sessions'])
   })
 
-  it('registers the switcher, the model menu, the session mark and the settings section in their slots', () => {
+  it('registers the switcher, the model menu, the mode seat, the session mark and the settings section in their slots', () => {
     const h = harness()
     expect(h.registrations.map(({ options }) => [options.id, options.name, options.order])).toEqual([
       ['dsh-ccgui.switcher', 'conversation.input.left', undefined],
       ['dsh-ccgui.model-menu', 'conversation.input.right', 1000],
       ['dsh-ccgui.session-mark', 'sidebar.session.row.leading', 20],
+      ['dsh-ccgui.mode-seat', 'conversation.input.left', 1],
       ['dsh-ccgui.session-status-mark', 'sidebar.session.row.trailing', undefined],
       ['dsh-ccgui.settings', 'settings.section', 50],
       ['dsh-ccgui.settings', 'settings.section.icon', undefined],
@@ -186,6 +192,44 @@ describe('apply', () => {
     face.load()
     await Promise.resolve()
     expect(h.load).toHaveBeenCalledTimes(1)
+  })
+
+  // The mode seat's inject is where the mode route meets the browser: the fetch must be
+  // called on `window`, not passed bare, and every render of a session gets the same API.
+  it('gives the mode seat an API that posts for that session through window.fetch', async () => {
+    const h = harness()
+    const face = registered(h, 'dsh-ccgui.mode-seat').options.inject('mode-seat-1') as { modes: ModeApi }
+    const reply = {
+      success: true,
+      data: {
+        modes: {
+          configId: 'permission_mode',
+          current: 'default',
+          options: [{ value: 'default', name: 'Default' }],
+        },
+      },
+    }
+    const fetchSpy = vi.fn((_input: string, _init: RequestInit) =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(reply) } as unknown as Response),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      expect(window.fetch).toBe(fetchSpy)
+      await expect(face.modes.read('cli-claude')).resolves.toMatchObject({ modes: { current: 'default' } })
+      const call = fetchSpy.mock.calls.at(0)
+      expect(call?.[0]).toBe(MODE_ROUTE_PREFIX)
+      expect(call?.[1].method).toBe('POST')
+      expect(bodyOf(call?.[1] ?? {})).toEqual({ sessionId: 'mode-seat-1', provider: 'cli-claude' })
+      const again = registered(h, 'dsh-ccgui.mode-seat').options.inject('mode-seat-1') as { modes: ModeApi }
+      expect(again.modes).toBe(face.modes)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('hands the session mark the list of sessions it draws from', () => {
+    const h = harness()
+    expect(registered(h, 'dsh-ccgui.session-status-mark').options.inject('s1')).toEqual({ list: h.list })
   })
 })
 

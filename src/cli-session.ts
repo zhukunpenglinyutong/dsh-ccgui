@@ -18,8 +18,8 @@ import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { RequestMessage, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { abortable } from './abortable.ts'
 import { AsyncQueue } from './async-queue.ts'
-import { readEffortList, readModelList } from './model-options.ts'
-import type { CliEffortList } from './model-options.ts'
+import { readEffortList, readModeList, readModelList } from './model-options.ts'
+import type { CliEffortList, CliModeList } from './model-options.ts'
 import { nativeReplayState, readNativeSession, unseenUserInput } from './request-input.ts'
 import type { UserInput } from './request-input.ts'
 import { toPromptBlocks } from './prompt-images.ts'
@@ -27,6 +27,7 @@ import { openSession, withinStartTimeout } from './session/connect.ts'
 import { driveTool } from './session/drive-tool.ts'
 import type { AskPermission } from './session/drive-tool.ts'
 import { EffortState } from './session/effort-state.ts'
+import { ModeState } from './session/mode-state.ts'
 import { ModelState } from './session/model-state.ts'
 import type { ConfigOptions } from './session/model-state.ts'
 import { errorMessage } from './session/outcomes.ts'
@@ -58,6 +59,7 @@ export class CliSession {
   private readonly permissions = new PermissionQueue()
   private readonly model: ModelState
   private readonly effort: EffortState
+  private readonly mode: ModeState
   private readonly turns: TurnQueue
   private seen: ReadonlySet<string>
   private transport: AcpTransport | undefined
@@ -78,8 +80,15 @@ export class CliSession {
     this.label = options.label
     this.startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS
     this.seen = options.sentMessageIds ?? new Set()
-    this.model = new ModelState(options.knownModels, (reported) => this.noteOptions(reported))
+    this.model = new ModelState(options.knownModels, (reported, isNewSession) =>
+      this.noteOptions(reported, isNewSession),
+    )
     this.effort = new EffortState((reported) => this.model.observe(reported))
+    this.mode = new ModeState(
+      () => options.knownModels?.()?.modes,
+      (reported) => this.model.observe(reported),
+      options.initialMode,
+    )
     this.tools = new ToolMirror({
       mintCallId: options.mintCallId ?? (() => `cli-${randomUUID()}`),
       settleMs: options.toolSettleMs ?? DEFAULT_TOOL_SETTLE_MS,
@@ -125,6 +134,31 @@ export class CliSession {
   /** Ids of the user messages this session or its predecessors sent to a CLI. */
   get sentMessageIds(): ReadonlySet<string> {
     return this.seen
+  }
+
+  /** The CLI's own modes, exactly as it last reported them. */
+  get modes(): CliModeList | undefined {
+    return this.mode.current()
+  }
+
+  /** A mode the user picked that the CLI has not confirmed yet. */
+  get pendingMode(): string | undefined {
+    return this.mode.pending
+  }
+
+  /**
+   * Switch the CLI to one of its own modes, by the id the CLI itself reported. Before the
+   * CLI has started there is nothing to change, so the pick waits for the first step.
+   * @param mode - the mode id, unchanged.
+   * @param signal - cancellation for the wait.
+   * @returns the modes as the CLI now reports them, or the known list when it has not started.
+   * @throws when the CLI never offered that mode, or refuses the change.
+   */
+  async switchMode(mode: string, signal?: AbortSignal): Promise<CliModeList | undefined> {
+    this.mode.choose(mode)
+    const { transport, acpSessionId, label } = this
+    if (transport === undefined || acpSessionId === undefined) return this.mode.current()
+    return this.mode.apply({ transport, acpSessionId, label }, signal)
   }
 
   /**
@@ -264,14 +298,28 @@ export class CliSession {
     if (kept !== undefined && reasoningEffort !== undefined) {
       this.events.push({
         type: 'text',
+        notice: true,
         text: `（${label} 当前模型不支持思考强度 ${reasoningEffort}，沿用 CLI 的 ${kept}。请在菜单里重新选择。）\n\n`,
       })
     }
+    // A mode picked before the CLI started has had no session to change until now.
+    const refusal = await this.mode.settle({ transport, acpSessionId, label }, signal)
+    if (refusal !== undefined) {
+      this.events.push({ type: 'text', notice: true, text: refusal.notice })
+      this.options.onModeRefused?.(refusal.mode)
+    }
   }
 
-  /** Every report of the CLI's options passes through the model state, and lands here. */
-  private noteOptions(options: ConfigOptions): void {
+  /**
+   * Every report of the CLI's options passes through the model state, and lands here. Only a
+   * new session's modes go to the catalog: it speaks for sessions with no CLI yet, which start
+   * where a new process does, not where this one was switched to.
+   */
+  private noteOptions(options: ConfigOptions, isNewSession: boolean): void {
     this.effort.observe(options)
+    this.mode.observe(options)
+    const fresh = isNewSession ? readModeList(options) : undefined
+    if (fresh !== undefined) this.options.onModes?.(fresh)
     const model = readModelList(options)?.current
     if (model !== undefined) this.heldEfforts = new Map([...this.heldEfforts, [model, readEffortList(options)]])
   }
@@ -347,6 +395,7 @@ export class CliSession {
   private pushFreshSessionNotice(): void {
     this.events.push({
       type: 'text',
+      notice: true,
       text: `（${this.label} 无法恢复之前的会话，已开始新会话，它不记得之前的内容。）\n\n`,
     })
   }
